@@ -29,6 +29,8 @@ HEADER_AGENT_KEY = "X-WAP-Agent-Key"
 
 POW_ALGORITHM = "sha256-leading-zero-hex"
 
+EFFECT_RANK: dict[str, int] = {"read": 0, "write": 1, "financial": 2}
+
 _HEX_RE = re.compile(r"^[0-9a-f]*$")
 _LABEL_RE = re.compile(r"^(?!-)[a-z0-9-]{1,63}(?<!-)$")
 _CAPABILITY_ID_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,63}$")
@@ -98,6 +100,7 @@ class ErrorCode(str, Enum):
     FORBIDDEN = "forbidden"
     SESSION_BUSY = "session_busy"
     IDEMPOTENCY_CONFLICT = "idempotency_conflict"
+    EFFECTS_NOT_PERMITTED = "effects_not_permitted"
     UNKNOWN_CAPABILITY = "unknown_capability"
     REPLAY_DETECTED = "replay_detected"
     VALIDATION_ERROR = "validation_error"
@@ -118,6 +121,7 @@ ERROR_STATUS: dict[ErrorCode, int] = {
     ErrorCode.FORBIDDEN: 403,
     ErrorCode.SESSION_BUSY: 409,
     ErrorCode.IDEMPOTENCY_CONFLICT: 409,
+    ErrorCode.EFFECTS_NOT_PERMITTED: 403,
     ErrorCode.POW_INVALID: 403,
     ErrorCode.UNKNOWN_CAPABILITY: 404,
     ErrorCode.REPLAY_DETECTED: 409,
@@ -175,6 +179,16 @@ class Capability(WAPModel):
         if value.get("type", "object") != "object":
             raise ValueError("input_schema must describe a JSON object")
         return value
+
+
+def mcp_annotation_hints(capability: Capability) -> dict[str, bool]:
+    """MCP ``ToolAnnotations`` hints implied by a capability's ``effects``."""
+    return {
+        "read_only_hint": capability.effects == "read",
+        "destructive_hint": capability.effects == "financial",
+        "idempotent_hint": capability.effects == "read",
+        "open_world_hint": True,
+    }
 
 
 class RateLimitPolicy(WAPModel):
@@ -273,6 +287,14 @@ class AgentMessage(WAPModel):
     capability_id: str | None = None
     structured_data: dict[str, Any] | None = None
     in_reply_to: str | None = None
+    max_effects: Literal["read", "write", "financial"] | None = Field(
+        default=None,
+        description=(
+            "The strongest side effect the sender permits for this turn. A business agent must not run a "
+            "capability with stronger effects (e.g. an intent router booking something when only 'read' is "
+            "permitted) and instead answers effects_not_permitted naming the capability, so the user can confirm."
+        ),
+    )
     idempotency_key: str | None = Field(
         default=None,
         min_length=8,
@@ -369,6 +391,7 @@ __all__ = [
     "HEADER_KEY_ID",
     "HEADER_AGENT_KEY",
     "POW_ALGORITHM",
+    "EFFECT_RANK",
     "ERROR_STATUS",
     "AgentManifest",
     "AgentMessage",
@@ -382,5 +405,6 @@ __all__ = [
     "StreamEventType",
     "authority_host",
     "is_local_authority",
+    "mcp_annotation_hints",
     "normalize_authority",
 ]

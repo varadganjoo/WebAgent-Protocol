@@ -351,3 +351,16 @@ class TestImportFromMCP:
                 *(client.invoke("acme.example", "check_stock", {"sku": "W-1"}, session_id=f"s{i}") for i in range(8))
             )
         assert all(r.structured_data["quantity"] == 7 for r in results)
+
+
+async def test_mcp_idempotency_key(keypair) -> None:
+    from wap.server.mcp_endpoint import META_IDEMPOTENCY_KEY
+
+    _, app, inventory = create_bakery(BAKERY, private_key=keypair.private_key, require_pow=False)
+    args = {"item": "Almond Croissant", "quantity": 2, "customer_name": "Ada"}
+    async with running(app), mcp_http_client(app) as mcp:
+        first = await mcp.call_tool("reserve_item", args, meta={META_IDEMPOTENCY_KEY: "mcp-order-0001"})
+        retry = await mcp.call_tool("reserve_item", args, meta={META_IDEMPOTENCY_KEY: "mcp-order-0001"})
+    assert retry.structured_content == first.structured_content
+    assert retry.meta["io.webagent/idempotent_replay"] is True
+    assert inventory.pastries["almond croissant"].stock == 10

@@ -46,6 +46,7 @@ from .exceptions import (
     ConfirmationDeclined,
     ConversationLimitReached,
     ConversationStopped,
+    EffectsNotPermitted,
     LoopDetected,
     ProofOfWorkFailed,
     ProtocolError,
@@ -166,6 +167,7 @@ class WAPClient:
         allow_insecure: bool = False,
         verify_dns: bool = False,
         block_private_networks: bool = False,
+        allow_loopback: bool = False,
         validate_payloads: bool = True,
         max_pow_attempts: int = 3,
         user_agent: str | None = None,
@@ -193,6 +195,7 @@ class WAPClient:
             allow_insecure=allow_insecure,
             verify_dns=verify_dns,
             block_private_networks=block_private_networks,
+            allow_loopback=allow_loopback,
         )
         self.auth_tokens = {normalize_authority(k): v for k, v in (auth_tokens or {}).items()}
         self.allow_insecure = allow_insecure
@@ -279,6 +282,7 @@ class WAPClient:
         auth_token: str | None = None,
         stream: bool = True,
         idempotency_key: str | None = None,
+        max_effects: str | None = None,
     ) -> AsyncIterator[StreamEvent]:
         """Send one turn to ``domain`` and yield reply events as they arrive.
 
@@ -328,7 +332,7 @@ class WAPClient:
         if idempotency_key is None and capability is not None and effects != "read":
             idempotency_key = "auto-" + uuid.uuid4().hex
         # Free-text intents may trigger actions, so they are only retried with an idempotency key.
-        retryable = effects == "read" or idempotency_key is not None
+        retryable = effects == "read" or idempotency_key is not None or max_effects == "read"
 
         token = auth_token or self.auth_tokens.get(manifest.domain)
         challenge: Challenge | None = None
@@ -348,6 +352,7 @@ class WAPClient:
                     capability_id=capability_id,
                     structured_data=payload,
                     idempotency_key=idempotency_key,
+                    max_effects=max_effects,
                     pow_seed=pow_seed,
                     pow_nonce=pow_nonce,
                     public_key=self.signer.public_key,
@@ -364,8 +369,10 @@ class WAPClient:
                     yield event
                 return
             except (httpx.TransportError, ProtocolError) as exc:
+                # Gateway errors without a WAP error body (proxies, load balancers) are transient;
+                # a WAP "action_failed" (502) means the business's code failed and is not retried.
                 transient = isinstance(exc, httpx.TransportError) or (
-                    exc.status_code in _TRANSIENT_STATUS
+                    (exc.status_code in _TRANSIENT_STATUS and exc.code == "http_error")
                     or exc.code in ("session_busy",)
                     or (exc.code == "idempotency_conflict" and exc.retry_after is not None)
                 )
@@ -402,6 +409,7 @@ class WAPClient:
         auth_token: str | None = None,
         stream: bool = True,
         idempotency_key: str | None = None,
+        max_effects: str | None = None,
     ) -> InteractionResult:
         """Like :meth:`query` but collects the stream into an :class:`InteractionResult`."""
         started = time.perf_counter()
@@ -415,6 +423,7 @@ class WAPClient:
             auth_token=auth_token,
             stream=stream,
             idempotency_key=idempotency_key,
+            max_effects=max_effects,
         ):
             events.append(event)
         last = events[-1]
@@ -477,6 +486,8 @@ class WAPClient:
             raise RateLimited(code, message, **kwargs)
         if code == "auth_required":
             raise AuthRequired(code, message, **kwargs)
+        if code == "effects_not_permitted":
+            raise EffectsNotPermitted(code, message, **kwargs)
         if code == "loop_detected":
             raise LoopDetected(code, message, **kwargs)
         if code == "conversation_limit":

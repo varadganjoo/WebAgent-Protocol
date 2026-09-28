@@ -175,6 +175,7 @@ async def _admit(server: WAPServer, request: Request) -> tuple[Turn, dict[str, s
         agent_key=message.public_key,
         principal=principal,
         tier=decision.tier,
+        conversation_policy=decision.conversation_policy,
     )
     await turn.open()
     return turn, {**headers, **key_headers}

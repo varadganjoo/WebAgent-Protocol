@@ -42,6 +42,7 @@ from ..spec.conversation import (
 from ..spec.crypto import Signer
 from ..spec.models import (
     CHALLENGE_PATH,
+    EFFECT_RANK,
     INTERACT_PATH,
     AgentManifest,
     AgentMessage,
@@ -417,8 +418,14 @@ class Turn:
         agent_key: str | None,
         principal: Any,
         tier: str,
+        conversation_policy: ConversationPolicy | Literal[False] | None = None,
     ) -> None:
         self.server = server
+        # A per-request override (from the admission hook) replaces the server's loop policy.
+        if conversation_policy is False:
+            self.policy: ConversationPolicy | None = None
+        else:
+            self.policy = conversation_policy or server.conversation_policy
         self.message = message
         self.owner_key = owner_key
         self.principal_key = principal_key
@@ -498,14 +505,22 @@ class Turn:
         return self.server.reply(self.message, record.get("content", ""), record.get("data"))
 
     async def _principal_guard(self) -> ConversationGuard | None:
-        policy = self.server.conversation_policy
+        policy = self.policy
         key = self._principal_guard_key()
         if policy is None or key is None:
             return None
         return ConversationGuard.from_dict(policy.across_sessions(), await self.server.store.get(key))
 
+    def _session_guard(self, session: SessionState) -> ConversationGuard | None:
+        if self.policy is None:
+            return None
+        if session.guard is None or session.guard.policy != self.policy:
+            data = session.guard.to_dict() if session.guard is not None else None
+            session.guard = ConversationGuard.from_dict(self.policy, data)
+        return session.guard
+
     def _check_guards(self, session: SessionState, principal_guard: ConversationGuard | None) -> None:
-        for guard in (session.guard, principal_guard):
+        for guard in (self._session_guard(session), principal_guard):
             if guard is None:
                 continue
             try:
@@ -522,8 +537,9 @@ class Turn:
         reply = server.reply(self.message, content, data)
         session = self.ctx.session
         reply_fp = reply_fingerprint(reply.content, reply.structured_data)
-        if session.guard is not None:
-            session.guard.record(self._request_fp, reply_fp)
+        session_guard = self._session_guard(session)
+        if session_guard is not None:
+            session_guard.record(self._request_fp, reply_fp)
         session.history.extend([self.message, reply])
         try:
             await server.sessions.save(session)
@@ -533,7 +549,7 @@ class Turn:
         principal_guard = await self._principal_guard()
         if principal_guard is not None and guard_key is not None:
             principal_guard.record(self._request_fp, reply_fp)
-            await server.store.set(guard_key, principal_guard.to_dict(), ttl=server.conversation_policy.window_seconds)
+            await server.store.set(guard_key, principal_guard.to_dict(), ttl=principal_guard.policy.window_seconds)
         if self._idempotency_key is not None:
             await server.store.set(
                 self._idempotency_key,
@@ -895,6 +911,7 @@ class WAPServer:
         agent_key: str | None = None,
         principal: Any = None,
         tier: str = "default",
+        conversation_policy: ConversationPolicy | Literal[False] | None = None,
     ) -> Turn:
         """Begin one request/response turn (session lock, idempotency, loop guard). See :class:`Turn`."""
         return Turn(
@@ -906,6 +923,7 @@ class WAPServer:
             agent_key=agent_key,
             principal=principal,
             tier=tier,
+            conversation_policy=conversation_policy,
         )
 
     async def authenticate(self, authorization: str | None) -> Any:
@@ -933,6 +951,15 @@ class WAPServer:
             )
         if action.capability.requires_auth and ctx.principal is None:
             raise WAPProtocolError(ErrorCode.AUTH_REQUIRED, f"capability {capability_id!r} requires authorization")
+        permitted = ctx.message.max_effects
+        effects = action.capability.effects
+        if permitted is not None and EFFECT_RANK[effects] > EFFECT_RANK[permitted]:
+            raise WAPProtocolError(
+                ErrorCode.EFFECTS_NOT_PERMITTED,
+                f"{action.capability.name} has {effects!r} effects but this request only permits {permitted!r}; "
+                "ask the user to confirm, then call the capability directly",
+                details={"capability_id": capability_id, "effects": effects, "payload": payload},
+            )
         result = await action.call(payload, ctx)
         async for chunk in iterate_result(result, default_content=f"{action.capability.name} completed."):
             yield chunk

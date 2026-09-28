@@ -33,6 +33,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from ..spec.conversation import ConversationPolicy
 from ..spec.models import RateLimitPolicy
 from ..storage.base import StateStore
 
@@ -61,6 +62,9 @@ class AdmissionDecision:
     """Minimum difficulty a solution must have been issued at for this request."""
     deny: str | None = None
     """If set, the request is refused with ``forbidden`` and this message."""
+    conversation_policy: ConversationPolicy | Literal[False] | None = None
+    """Loop-protection limits for this request; ``False`` disables them (e.g. for a trusted
+    aggregator that legitimately repeats the same call for many end users)."""
 
 
 AdmissionHook = Callable[[AdmissionRequest], AdmissionDecision | Awaitable[AdmissionDecision]]

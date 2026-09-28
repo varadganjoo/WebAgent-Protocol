@@ -84,6 +84,14 @@ class AuthRequired(ProtocolError):
     """The capability requires a bearer token that was missing or rejected."""
 
 
+class EffectsNotPermitted(ProtocolError):
+    """The business wanted to run a capability with stronger effects than the request permitted.
+
+    ``details`` names the ``capability_id``, its ``effects`` and the ``payload`` it would have
+    used, so the user can be asked and the capability then called directly.
+    """
+
+
 class ConfirmationDeclined(WAPError):
     """The client's ``confirm`` hook declined an action with side effects; nothing was sent."""
 
@@ -116,6 +124,7 @@ __all__ = [
     "ConfirmationDeclined",
     "ConversationLimitReached",
     "ConversationStopped",
+    "EffectsNotPermitted",
     "InsecureTransport",
     "LoopDetected",
     "ManifestNotFound",

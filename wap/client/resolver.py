@@ -122,6 +122,7 @@ class ManifestResolver:
         allow_insecure: bool = False,
         verify_dns: bool = False,
         block_private_networks: bool = False,
+        allow_loopback: bool = False,
         www_fallback: bool = True,
     ) -> None:
         self.http = http
@@ -130,6 +131,8 @@ class ManifestResolver:
         self.allow_insecure = allow_insecure
         self.verify_dns = verify_dns or block_private_networks
         self.block_private_networks = block_private_networks
+        # With block_private_networks, still allow 127.0.0.0/8 / ::1 (local development).
+        self.allow_loopback = allow_loopback
         self.www_fallback = www_fallback
         self._cache: dict[str, ResolvedManifest] = {}
         self._locks: dict[str, asyncio.Lock] = {}
@@ -187,7 +190,11 @@ class ManifestResolver:
             if not addresses:
                 raise ManifestNotFound(target.authority, "DNS returned no addresses")
         if self.block_private_networks:
-            blocked = [a for a in addresses if not _is_public_address(a)]
+            blocked = [
+                a
+                for a in addresses
+                if not _is_public_address(a) and not (self.allow_loopback and ipaddress.ip_address(a).is_loopback)
+            ]
             if blocked:
                 raise VerificationFailed(
                     target.authority, f"resolves to non-public address(es) {blocked}; blocked by policy"

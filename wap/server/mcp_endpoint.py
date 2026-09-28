@@ -36,7 +36,15 @@ from mcp.server.transport_security import TransportSecuritySettings
 from mcp.shared.exceptions import MCPError
 
 from .. import __version__
-from ..spec.models import WAP_VERSION, WELL_KNOWN_PATH, AgentMessage, ErrorCode, Role, authority_host
+from ..spec.models import (
+    WAP_VERSION,
+    WELL_KNOWN_PATH,
+    AgentMessage,
+    ErrorCode,
+    Role,
+    authority_host,
+    mcp_annotation_hints,
+)
 from .admission import AdmissionRequest
 from .app import WAPProtocolError
 
@@ -131,7 +139,8 @@ class MCPEndpoint:
                     description=cap.description or cap.name,
                     input_schema=cap.input_schema,
                     output_schema=output,
-                    meta={META_PREFIX + "requires_auth": cap.requires_auth},
+                    annotations=types.ToolAnnotations(title=cap.name, **mcp_annotation_hints(cap)),
+                    meta={META_PREFIX + "requires_auth": cap.requires_auth, META_PREFIX + "effects": cap.effects},
                 )
             )
         return tools
@@ -189,6 +198,7 @@ class MCPEndpoint:
             client_ip=ip,
             principal=principal,
             tier=decision.tier,
+            conversation_policy=decision.conversation_policy,
         )
         try:
             await turn.open()
