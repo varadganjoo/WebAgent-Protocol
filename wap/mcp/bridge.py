@@ -21,6 +21,7 @@ Environment variables:
 from __future__ import annotations
 
 import json
+import logging
 import os
 from typing import Any
 
@@ -187,7 +188,11 @@ def build_server(bridge: WAPBridge | None = None) -> Any:
 
 def main() -> None:
     """Console entry point: ``wap-mcp`` (stdio transport)."""
-    build_server().run("stdio")
+    server = build_server()
+    # The MCP SDK configures INFO logging; per-request httpx lines would flood the host's MCP log.
+    for noisy in ("httpx", "httpcore"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
+    server.run("stdio")
 
 
 if __name__ == "__main__":
