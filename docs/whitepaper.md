@@ -19,7 +19,12 @@ lets any domain publish a signed, machine-readable description of what its agent
 JSON-Schema-validated inputs, streamed outputs, and Ed25519-signed replies. WAP adds an
 asymmetric economic defence, a stateless Hashcash-style proof-of-work gate combined with
 per-principal rate limits, so that rejecting abusive traffic costs the business microseconds
-while generating it costs the attacker milliseconds to seconds. We describe the design, its
+while generating it costs the attacker milliseconds to seconds. Because two cooperating language
+models can talk past each other forever, WAP also bounds dialogues with a conversation guard that
+stops repeated exchanges, ping-pong cycles, and stalls on both sides of the connection. WAP is
+designed as an **extension of the Model Context Protocol (MCP)**: the same functions are served as
+signed WAP capabilities and as a standard MCP endpoint, and a bridge turns any discovered website into
+native tools in MCP hosts. We describe the design, its
 threat model and a reference implementation (a FastAPI provider SDK, an async client, a
 command-line tool and a Model Context Protocol bridge). On a representative storefront, a WAP
 query places about **24× fewer tokens** in the model's context than the raw HTML of the page
@@ -79,8 +84,14 @@ cryptographic binding of replies and admission control to deployments.
 
 WAP draws on all of these. It borrows well-known discovery from RFC 8615, schemas from JSON
 Schema, the transport-agnostic tool shape from MCP, and cost-shifting from Hashcash, and it
-adds the missing pieces: **domain-bound signatures on every reply** and **built-in economic
-defence**.
+adds the missing pieces: **domain-bound signatures on every reply**, **built-in economic
+defence**, and **bounded dialogues**.
+
+WAP positions itself as an extension to MCP rather than a competitor. A WAP server's capabilities are
+exactly MCP tools. The same `@wap.action` function is published at `/mcp` as an ordinary MCP tool and
+at `/wap/v1/interact` with WAP's envelopes, and the manifest links the two through `mcp_url`. The MCP
+endpoint declares an `io.webagent/wap` extension and carries WAP's guarantees in `_meta`, so plain MCP
+clients work unchanged and WAP-aware clients gain verification (see `docs/mcp_extension.md`).
 
 ---
 
@@ -277,9 +288,50 @@ untrusted input to the user agent's model and must not be treated as instruction
 
 ---
 
-## 5. Performance Benchmarks: Token Reduction vs HTML Scraping
+## 5. Bounding Agent-to-Agent Dialogues
 
-### 5.1 Method
+### 5.1 The failure mode
+
+When a user's assistant negotiates with a business's assistant, both sides are stochastic, both are
+polite, and neither owns the decision to stop. In our own testing, a scripted "naive" shopper that
+kept offering the same low price against the bakery's final offer would have continued indefinitely.
+Every turn cost the shopper a proof-of-work and the bakery a tool invocation, and the user never got
+an answer. Rate limits slow such loops down but don't end them.
+
+### 5.2 The conversation guard
+
+WAP fingerprints every exchange as a pair of hashes: one over the request (capability, arguments,
+normalized text) and one over the reply. Fingerprints ignore ids, timestamps, signatures, and cosmetic
+rephrasing such as case, whitespace, and punctuation, so "Any croissants??" and "any croissants" are
+the same request. Within a sliding window, a request is refused when:
+
+* the same exchange has already happened `max_repeats` times in a row (default 3);
+* a cycle of up to `max_cycle_length` exchanges has repeated `max_repeats` times, which catches
+  offer/counter ping-pong;
+* the same request has been sent `max_identical_requests` times in a row (default 5) while only
+  counters in the replies changed (a stall);
+* the session has used `max_turns`.
+
+A repeated question with a *changing* answer, such as polling stock that is selling out, counts as
+progress until the stall threshold.
+
+### 5.3 Defence on both sides
+
+The **business** runs the guard per session and per agent key across sessions. It refuses with
+`loop_detected` (409) or `conversation_limit` (429) *before* any tool runs. The **user's side** runs
+the same guard locally, and counts error replies as replies, so a model that keeps resending an
+invalid request is also stopped. The MCP bridge turns a detected loop into a tool error whose text
+tells the model to stop, summarize what it learned, and report back to the user. That is the only
+exit that reliably breaks an LLM out of a retry habit.
+
+In a live run, a client repeatedly calling `negotiate_bulk_price` with the same offer through
+`wap-mcp` saw a counter-offer, then the bakery's final offer, and was stopped on the sixth call with
+that instruction. A different request to the same site still succeeded. Loop protection is on by
+default and can be tuned through `ConversationPolicy`.
+
+## 6. Performance Benchmarks: Token Reduction vs HTML Scraping
+
+### 6.1 Method
 
 We compare the model context needed to answer *"Is the Sourdough Croissant in stock, and what
 does it cost?"* under three strategies:
@@ -299,7 +351,7 @@ against raw HTML are conservative. Tokens are counted with a byte-level-BPE pre-
 approximation. Exact model tokenizers differ by roughly ±15%, and the tokenizer files could
 not be downloaded in our measurement environment. The script is `examples/benchmark.py`.
 
-### 5.2 Results
+### 6.2 Results
 
 | Representation | Bytes | ≈ Tokens | vs raw HTML |
 |---|---:|---:|---:|
@@ -314,7 +366,7 @@ not be downloaded in our measurement environment. The script is `examples/benchm
 Round-trip latency for a signed, proof-of-work-gated (*d* = 3) capability call through the
 full server pipeline, in process with no network: **p50 4.5 ms, p90 10.0 ms** over 30 calls.
 
-### 5.3 Interpretation
+### 6.3 Interpretation
 
 * **Against raw HTML**, WAP reduces per-query context by more than an order of magnitude
   (≈ 24× here, and more on heavier real pages).
@@ -343,7 +395,7 @@ The qualitative gains that tokens do not capture are larger than the token savin
 
 ---
 
-## 6. Future Work
+## 7. Future Work
 
 **Key transparency and DNS anchoring.** Publishing domain-key fingerprints in DNS (a TXT
 record under DNSSEC) or an append-only transparency log would let user agents detect a
@@ -371,10 +423,11 @@ decentralized "yellow pages" for capabilities without a central registry.
 
 ---
 
-## 7. Conclusion
+## 8. Conclusion
 
 The agentic web does not need agents that are better at pretending to be humans. It needs a
-way for the two kinds of software agent to talk to each other. WAP provides this with one
+way for the two kinds of software agent to talk to each other, and to stop talking when the
+conversation stops going anywhere. WAP provides this with one
 well-known URL, one signed contract, one endpoint, and an admission-control design that makes
 abuse cheaper to reject than to commit. The reference implementation is complete, tested, and
 small enough to audit, and a business can adopt it with a decorator and a key.

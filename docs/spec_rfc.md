@@ -42,7 +42,7 @@ stateless Hashcash-style proof-of-work gate and per-principal rate limits.
 9. Errors
 10. HTTP Header Fields
 11. State Machines
-12. Rate Limiting
+12. Rate Limiting and Loop Protection
 13. Security Considerations
 14. Privacy Considerations
 15. IANA Considerations
@@ -230,10 +230,12 @@ greater than the time remaining until `expires_at`.
 | `public_key` | string (64 hex) | yes | Domain key. |
 | `interaction_url` | absolute URL | yes | Endpoint for Section 7. |
 | `challenge_url` | absolute URL | cond. | Required when `pow_required` is true. |
+| `mcp_url` | absolute URL \| null | no | MCP streamable-HTTP endpoint serving the same capabilities as tools (Section 7.6). |
 | `capabilities` | array of Capability | yes | May be empty. IDs MUST be unique. |
 | `pow_required` | boolean | yes | Whether requests need proof-of-work. |
 | `pow_difficulty` | integer 1–16 | cond. | Required when `pow_required` is true. Advisory. |
-| `rate_limit_policy` | object | yes | Section 12. |
+| `rate_limit_policy` | object | yes | Section 12.1. |
+| `conversation_policy` | object \| null | no | Loop-protection limits the server enforces (Section 12.2). |
 | `issued_at` | number (Unix s) | yes | Signing time. |
 | `expires_at` | number (Unix s) \| null | no | After this instant the manifest is invalid. |
 | `signature` | string (128 hex) | yes | Section 4.2, by `public_key`. |
@@ -263,7 +265,7 @@ absolute `http(s)` URL), a client:
    non-loopback authority unless insecure mode was explicitly enabled.
 2. SHOULD, when acting on inputs chosen by a language model or other untrusted
    source, resolve the host and refuse private, loopback, link-local, multicast or
-   reserved addresses (Section 13.6).
+   reserved addresses (Section 13.7).
 3. Issues `GET {scheme}://A/.well-known/agent.json` and MUST NOT follow redirects.
    A 3xx response is a discovery failure.
 4. Rejects bodies larger than 1 MiB.
@@ -276,7 +278,7 @@ absolute `http(s)` URL), a client:
    b. `domain` equals the authority actually fetched (**domain binding**);
    c. the embedded signature verifies under `public_key`;
    d. `expires_at`, if present, is in the future;
-   e. the host of `interaction_url` and of `challenge_url` equals the host of
+   e. the host of `interaction_url`, `challenge_url` and `mcp_url` equals the host of
       `domain` or is a subdomain of it (**origin binding**), and neither uses `http`
       unless the authority is loopback or insecure mode is enabled;
    f. if the client has a pinned key for `domain`, `public_key` equals it;
@@ -373,7 +375,7 @@ The server receives `POST interaction_url` with an `application/json` body of at
 256 KiB containing one `AgentMessage`. It MUST perform the following steps **in
 order** and MUST NOT invoke capability logic before step 9:
 
-1. **IP rate limit** (Section 12). Failure: `rate_limited`.
+1. **IP rate limit** (Section 12.1). Failure: `rate_limited`.
 2. **Version.** If `X-WAP-Version` is present and its major version is not 1:
    `unsupported_version`.
 3. **Envelope.** Parse and validate the `AgentMessage`: `invalid_request`.
@@ -389,9 +391,11 @@ order** and MUST NOT invoke capability logic before step 9:
 8. **Authorization.** If an `Authorization: Bearer <token>` header is present it is
    validated; an invalid token yields `auth_required`. Capabilities with
    `requires_auth: true` require a valid token.
-9. **Session binding and dispatch.** A session is bound to the `public_key` that
-   created it; a message for an existing `session_id` signed by a different key
-   yields `forbidden`. If `capability_id` is set, `structured_data` (or `{}`) MUST
+9. **Session binding, loop check and dispatch.** A session is bound to the
+   `public_key` that created it; a message for an existing `session_id` signed by
+   a different key yields `forbidden`. The request is then checked against the
+   conversation guard (Section 12.2) and refused with `loop_detected` or
+   `conversation_limit` without invoking any capability. If `capability_id` is set, `structured_data` (or `{}`) MUST
    validate against the capability's `input_schema` (`validation_error`), and an
    undeclared capability yields `unknown_capability`. Otherwise the server's intent
    handler (e.g. an LLM router) processes `content`.
@@ -428,6 +432,18 @@ example a price quote) SHOULD only be redeemable within the same session.
 Capabilities with `requires_auth: true` require an `Authorization: Bearer` token
 issued out of band (API key, OAuth 2.0 access token, etc.). Token semantics are
 defined by the business. Tokens MUST NOT be included in signed message bodies.
+
+### 7.6. MCP Binding
+
+A business agent MAY additionally serve its capabilities as a standard Model
+Context Protocol server (streamable HTTP) and advertise it as `mcp_url`. Each
+capability becomes an MCP tool whose `name`, `inputSchema` and `outputSchema`
+equal the capability's `id`, `input_schema` and `output_schema`. The MCP
+endpoint declares the `io.webagent/wap` extension, returns the signed reply of
+Section 7.3 in `_meta["io.webagent/signed_reply"]`, accepts proof-of-work in
+`_meta["io.webagent/pow"]` and session continuation in
+`_meta["io.webagent/session_id"]`, and applies Sections 12.1 and 12.2. The
+binding is specified in `docs/mcp_extension.md`.
 
 ## 8. Streaming (Server-Sent Events)
 
@@ -476,8 +492,10 @@ Errors use the HTTP status below and a JSON body:
 | `unknown_capability` | 404 | `details.available` lists capability IDs. |
 | `replay_detected` | 409 | Duplicate `message_id` or timestamp outside the window. |
 | `validation_error` | 422 | `structured_data` violates `input_schema`, or a business rule rejected the values; `details.errors`. |
+| `loop_detected` | 409 | The request would continue a repetitive exchange (Section 12.2); `details` names the pattern. Do not retry unchanged. |
 | `pow_required` | 428 | Proof-of-work needed; `details.challenge` holds a challenge. |
 | `rate_limited` | 429 | `Retry-After` header and `retry_after` member give seconds to wait. |
+| `conversation_limit` | 429 | The session exhausted its turn budget (Section 12.2). Start over or stop. |
 | `internal_error` | 500 | Unexpected server failure. |
 | `action_failed` | 502 | The capability's back-end failed. |
 
@@ -547,7 +565,9 @@ un-prefixed names.
                  └── expires_at ──▶ [EXPIRED]       └── reuse ──▶ 403 pow_invalid(replayed)
 ```
 
-## 12. Rate Limiting
+## 12. Rate Limiting and Loop Protection
+
+### 12.1. Rate Limiting
 
 `rate_limit_policy` advertises the limits the server enforces:
 
@@ -572,6 +592,49 @@ SHOULD bound the number of tracked principals and evict idle ones.
 
 Clients SHOULD honour `Retry-After` and SHOULD NOT retry `rate_limited` responses
 automatically without delay.
+
+### 12.2. Conversation Loop Protection
+
+When both parties are language models, a dialogue can fail to converge: the same
+question gets the same answer indefinitely, two agents alternate between a few
+states (offer, counter-offer, offer, …), or a session runs on while only a counter
+in the answer changes. Rate limits bound the *speed* of such loops; the
+conversation guard bounds their *length*.
+
+`conversation_policy` advertises:
+
+```json
+{"max_turns": 100, "max_repeats": 3, "max_cycle_length": 3, "window_seconds": 300,
+ "max_identical_requests": 5, "max_repeats_across_sessions": 10}
+```
+
+For every exchange the guard records a *request fingerprint* over
+(`capability_id`, `structured_data`, normalised `content`) and a *reply
+fingerprint* over (normalised `content`, `structured_data`). Normalisation lower-
+cases text, collapses whitespace and removes punctuation; fingerprints exclude
+`message_id`, `timestamp`, `pow_*`, `public_key` and `signature`. Only exchanges
+within `window_seconds` are considered. A request is refused when:
+
+1. the session already has `max_turns` exchanges (`conversation_limit`);
+2. the last `max_identical_requests` requests were identical to it, regardless
+   of the replies (`loop_detected`, a stall);
+3. for some *p* ≤ `max_cycle_length`, the last *p* × `max_repeats` exchanges are
+   the same *p* exchanges repeated `max_repeats` times with identical replies,
+   and the request is the first of that cycle (`loop_detected`).
+
+A repeated request whose replies differ (e.g. polling changing stock) is progress,
+not a loop, until rule 2's threshold. Servers SHOULD additionally apply rules 2
+and 3 per agent key across sessions, using `max_repeats_across_sessions` for
+both thresholds, so that a loop cannot evade detection by minting fresh
+`session_id`s. Servers MUST perform the check before invoking capability logic.
+
+User agents SHOULD run the same guard locally, counting error replies as replies,
+and SHOULD stop *before* sending a request that would be refused. A user agent
+driven by a language model SHOULD surface a stop instruction ("summarize and
+report back to the user") rather than an error the model may simply retry.
+Capability authors SHOULD make replies deterministic once a negotiation has
+concluded (for example, repeating a final offer verbatim rather than incrementing
+a round counter), which lets guards recognise the stalemate early.
 
 ## 13. Security Considerations
 
@@ -611,13 +674,20 @@ legitimate client solves in well under a second (difficulty 4 ≈ 65 536 hashes)
 Proof-of-work is not a defence against well-resourced attackers with GPUs or
 botnets; it raises the floor and composes with authentication and reputation.
 
-### 13.5. Origin Binding
+### 13.5. Runaway Agent Dialogues
+
+Two cooperating but imperfect language models can loop indefinitely, costing both
+parties and never returning control to the human. Section 12.2 bounds this on both
+sides of the connection; implementations SHOULD NOT disable it without an
+alternative bound on turns.
+
+### 13.6. Origin Binding
 
 Manifests MUST NOT direct clients to interaction or challenge endpoints outside the
 manifest's domain; otherwise a malicious manifest could turn many user agents into a
 reflected flood against a third party.
 
-### 13.6. Server-Side Request Forgery
+### 13.7. Server-Side Request Forgery
 
 When the domain to query is chosen by a language model (for example through the MCP
 bridge), prompt injection can steer the agent to internal addresses. User agents
@@ -626,20 +696,20 @@ NOT follow redirects, and SHOULD cap response sizes. Note that resolve-then-conn
 checks are subject to DNS rebinding; high-assurance deployments should enforce the
 policy at the connection layer (e.g. an egress proxy).
 
-### 13.7. Prompt Injection Through Replies
+### 13.8. Prompt Injection Through Replies
 
 Signed replies prove *who* said something, not that it is safe to follow.
 `content` and string values in `structured_data` are untrusted input to the user
 agent's model and MUST be treated as data, not instructions.
 
-### 13.8. Key Management
+### 13.9. Key Management
 
 Domain private keys SHOULD be stored in a secrets manager and rotated by publishing a
 new manifest. Because manifests expire, rotation completes within one manifest TTL
 for clients that do not pin keys. Ephemeral domain keys are acceptable only for
 development.
 
-### 13.9. Clock Skew
+### 13.10. Clock Skew
 
 Timestamps are compared against the server clock with a default ±300 s tolerance.
 Deployments SHOULD run NTP.
@@ -820,6 +890,7 @@ A conforming **business agent**:
 - [ ] signs every reply and error body with the domain key;
 - [ ] emits SSE events in the order and with the invariants of Section 8;
 - [ ] single-uses proof-of-work seeds and binds difficulty to the seed;
+- [ ] refuses looping conversations before running capabilities (Section 12.2);
 - [ ] returns the error codes and statuses of Section 9.
 
 A conforming **user agent**:
@@ -830,6 +901,7 @@ A conforming **user agent**:
 - [ ] verifies every reply against the *manifest* key and checks `in_reply_to`;
 - [ ] treats streamed tokens as provisional until the signed `message` event;
 - [ ] bounds proof-of-work retries and honours `Retry-After`;
+- [ ] stops locally before continuing a loop and hands control back to the user;
 - [ ] treats reply content as untrusted data.
 
 The reference implementation in this repository (`wap/`) is exercised against this

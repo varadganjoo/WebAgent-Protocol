@@ -1,278 +1,269 @@
-# WebAgent Protocol (WAP)
+# WebAgent Protocol
 
-**AI agents discover, negotiate, and transact directly with businesses' AI agents, without scraping.**
+[![CI](https://github.com/varadganjoo/WebAgent-Protocol/actions/workflows/ci.yml/badge.svg)](https://github.com/varadganjoo/WebAgent-Protocol/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/webagent-protocol.svg)](https://pypi.org/project/webagent-protocol/)
+[![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue.svg)](pyproject.toml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![MCP extension](https://img.shields.io/badge/MCP-extension%20io.webagent%2Fwap-8A2BE2.svg)](docs/mcp_extension.md)
 
-WAP is an open standard and a Python reference implementation. A website publishes a signed manifest at
-`/.well-known/agent.json` that describes what its agent can do. Any AI agent can then call those capabilities
-with schema-validated JSON, stream the reply, and verify through Ed25519 signatures that the answer really came
-from that domain. The business's back-end (inventory systems, paid LLMs) is protected by proof-of-work and
-rate limits that are built into the protocol.
+**An open MCP extension for the open web. AI agents can discover, verify, and safely use the tools
+that any website publishes, starting from nothing but its domain name.**
 
-```text
-pip install -e ".[server,mcp]"        # from a clone of this repository
-python examples/bakery_server.py      # a business agent on :8000
-wap ask localhost:8000 "Do you have sourdough croissants?"
+MCP connects a model to tools you have installed. WebAgent Protocol (WAP) lets the model find tools on sites
+it has never seen:
+
+- **Discovery.** A website publishes a signed manifest at `/.well-known/agent.json`.
+- **Native tools.** Claude, Cursor, Codex, or any other MCP host gets the site's capabilities as native tools.
+- **Signed results.** Every answer is signed by the business, so a quoted price is provably the business's
+  price.
+- **Protection for the business.** Proof-of-work and rate limits stop bots from draining the business's AI
+  budget.
+- **Protection for the user.** Built-in loop protection stops two AIs from talking in circles forever.
+
+Free and open source (MIT). Python 3.11+.
+
+<p align="center">
+  <img src="docs/assets/shopper_demo.svg" alt="A shopper agent discovers a bakery's agent, verifies its signature, solves a proof-of-work challenge, negotiates a bulk price over three rounds and receives a signed reservation token" width="760">
+</p>
+
+## One function, three ways in
+
+```python
+from wap.server import WAPServer
+
+wap = WAPServer(name="Golden Crust Bakery", domain="bakery.example", private_key=KEY, require_pow=True)
+
+
+@wap.action(description="Units of a pastry available right now.")
+async def check_pastry_stock(item: str) -> StockLevel: ...
+
+
+wap.mount(app)  # your FastAPI app
 ```
 
-| | |
-|---|---|
-| 📜 **Spec** | [`docs/spec_rfc.md`](docs/spec_rfc.md): WAP/1.0 in Internet-Draft style (headers, errors, state machines) |
-| 📄 **Whitepaper** | [`docs/whitepaper.md`](docs/whitepaper.md): *Beyond Scraping: Protocol-Mediated Agentic Web* |
-| 🏪 **Provider SDK** | `wap.server`: FastAPI drop-in with `@wap.action`, SSE, PoW, and rate limiting |
-| 🛒 **Consumer SDK** | `wap.client`: async resolver, verifier, PoW solver, and SSE streamer |
-| 🔌 **MCP bridge** | `wap-mcp`: lets Claude, Cursor, and Codex talk to any WAP site |
-| ⌨️ **CLI** | `wap ask / inspect / verify / keygen / serve` |
+That single decorator publishes:
 
----
-
-## Why
-
-Today, agents read websites the way humans do. They render HTML, guess which number is the price, and
-simulate clicks. This approach is expensive, breaks on every redesign, and cannot prove where the data came
-from. When a business puts an LLM behind a chat widget, every scripted question also costs the business money.
-
-WAP replaces this with an explicit contract:
-
-| | Scraping | WAP |
+| Endpoint | Who uses it | What they get |
 |---|---|---|
-| Context per query (benchmark storefront) | ≈ 7,071 tokens of HTML | **≈ 299 tokens** (schema + result) |
-| Data | inferred from markup | typed JSON validated by JSON Schema |
-| Actions (hold, negotiate, order) | simulated clicks | first-class capabilities |
-| Authenticity | none | Ed25519 signature on every reply |
-| Abuse protection | CAPTCHAs aimed at humans | proof-of-work + per-IP/per-key limits aimed at agents |
+| `/.well-known/agent.json` | any agent, crawler, or registry | a signed manifest: tools, JSON Schemas, public key, policies |
+| `/mcp` | **any MCP client**, unchanged | standard MCP tools, with signed results and WAP metadata in `_meta` |
+| `/wap/v1/interact` | WAP clients and the `wap-mcp` bridge | signed envelopes, proof-of-work, SSE streaming, multi-turn sessions |
 
-These numbers come from `python examples/benchmark.py`. The whitepaper describes the method and its caveats,
-including the fact that against *well-stripped visible text*, WAP's token saving is modest. The main gains
-are correctness, the ability to act, and authenticity.
+## How it relates to MCP and A2A
+
+| | MCP | A2A | **WebAgent Protocol** |
+|---|---|---|---|
+| Main job | connect a model host to tools it has been configured with | structured tasks between autonomous agents | let hosts **find and safely use tools that websites publish** |
+| How a server is found | configured by the user | agent card at a well-known URL | signed manifest at `/.well-known/agent.json` that links to the site's MCP endpoint |
+| Relationship to WAP | WAP **extends** it: WAP tools *are* MCP tools, and extra guarantees ride in `_meta` and a declared extension | complementary | — |
+
+WAP adds what an open-web setting needs and an installed-server setting can assume:
+
+- **Replies you can prove.** Every reply is Ed25519-signed and bound to the domain.
+- **Admission control.** Anyone can call without registering, but abuse costs the caller more than it costs
+  the business.
+- **Bounded dialogues.** Conversations between agents are guaranteed to end.
+
+The full proposal, written as an MCP Specification Enhancement Proposal, is in
+[`docs/mcp_extension.md`](docs/mcp_extension.md).
+
+## Quickstart
+
+### Install
+
+```bash
+pip install webagent-protocol               # client + CLI
+pip install "webagent-protocol[server]"     # business side: FastAPI + /mcp endpoint
+pip install "webagent-protocol[mcp]"        # wap-mcp bridge for Claude, Cursor, Codex
+```
+
+To work from source: `git clone https://github.com/varadganjoo/WebAgent-Protocol && pip install -e ".[dev]"`.
+The import name is `wap`.
+
+### Run the demo
+
+```bash
+python examples/bakery_server.py      # a bakery agent on http://localhost:8000
+python examples/shopper_agent.py      # discovers it, negotiates, reserves (screenshot above)
+wap inspect localhost:8000            # the verified manifest and tool schemas
+wap ask localhost:8000 "hold 2 almond croissants for Ada"
+```
+
+### Use it from Claude, Cursor, or Codex
+
+**Option A: the bridge (any WAP site, discovered on demand).** Add `wap-mcp` as an MCP server. When the model
+calls `wap_discover("bakery.example")`, the site's tools appear in its tool list as
+`bakery_example__check_pastry_stock`, `bakery_example__reserve_item`, and so on.
+
+```json
+{
+  "mcpServers": {
+    "webagent": { "command": "wap-mcp", "env": { "WAP_BLOCK_PRIVATE_NETWORKS": "1" } }
+  }
+}
+```
+
+That is the config for Claude Desktop (`claude_desktop_config.json`) and Cursor (`.cursor/mcp.json`).
+For the other hosts:
+
+- **Claude Code:** `claude mcp add webagent -- wap-mcp`
+- **Codex** (`~/.codex/config.toml`): `[mcp_servers.webagent]` with `command = "wap-mcp"`
+- **Pre-loading sites:** use `wap-mcp bakery.example other.example` or `WAP_DOMAINS=...`, which is useful for
+  hosts that don't refresh tool lists.
+
+**Option B: connect straight to one site's `/mcp`.** This is plain remote MCP, for example
+`claude mcp add --transport http bakery https://bakery.example/mcp`.
+
+Environment variables for the bridge:
+
+| Variable | Purpose |
+|---|---|
+| `WAP_BLOCK_PRIVATE_NETWORKS` | Refuse sites that resolve to private or loopback IPs. This is the SSRF guard, recommended when a model picks the domains. |
+| `WAP_AGENT_KEY` | Hex Ed25519 key for signing requests. If unset, an ephemeral key is used. |
+| `WAP_PINNED_KEYS` | JSON `{"domain": "<hex key>"}` for key pinning. |
+| `WAP_AUTH_TOKENS` | JSON `{"domain": "<bearer token>"}` for tools that require auth. |
+| `WAP_ALLOW_INSECURE` | Allow plain HTTP to non-loopback hosts (testing only). |
+
+### Use it from Python
+
+```python
+from wap import WAPClient
+
+async with WAPClient() as client:
+    manifest = await client.discover("bakery.example")  # verified signature, domain, expiry
+
+    stock = await client.invoke("bakery.example", "check_pastry_stock", {"item": "Sourdough Croissant"})
+    print(stock.structured_data, stock.verified)  # {'available': 24, ...} True
+
+    session = client.session("bakery.example")  # multi-turn, state kept server-side
+    offer = await session.send(
+        capability_id="negotiate_bulk_price",
+        payload={"item": "Sourdough Croissant", "quantity": 12, "offered_unit_price": 3.6},
+    )
+
+    async for event in client.query("bakery.example", "Any croissants left?"):  # SSE streaming
+        print(event.text or "", end="")
+```
+
+### Already have an MCP server? Put it on the open web
+
+```python
+from mcp.server.mcpserver import MCPServer
+from wap.server import WAPServer
+
+tools = MCPServer("inventory")  # your existing MCP server
+
+
+@tools.tool()
+def check_stock(sku: str) -> dict: ...
+
+
+wap = WAPServer(name="Acme", domain="acme.example", private_key=KEY)
+wap.include_mcp(tools)  # its tools become signed, discoverable, abuse-protected
+app = wap.create_app()  # serves agent.json, /wap/v1/interact and /mcp
+```
+
+## Loop protection: no infinite loops between agents
+
+When your assistant negotiates with a business's assistant, both are language models and neither is sure
+when to stop. WAP bounds every conversation on **both** sides:
+
+| Pattern | Example | Default limit |
+|---|---|---|
+| Same question, same answer | "Any croissants?" → "24 left" → "Any croissants?" … | 3 in a row |
+| Ping-pong cycles | offer A → counter B → offer A → counter B … | cycles up to 3 turns, repeated 3 times |
+| Stalls | the same offer again and again while only a round counter changes | 5 identical requests |
+| Runaway sessions | endless turns | 100 per session (50 on the client, 40 in the bridge) |
+
+How each side enforces it:
+
+- **Fingerprints ignore cosmetic changes**, so "Any croissants??" and "any croissants" count as the same
+  request. A repeated question that gets a *changing* answer, such as polling stock, counts as progress.
+- **The business** refuses to continue a loop *before* running any tool, returning `loop_detected` (409) or
+  `conversation_limit` (429).
+- **The user's side** stops itself before sending, and counts error replies as replies.
+- **In Claude or Cursor**, the model receives a tool error telling it to *stop, summarize, and report back to
+  the user*. In a live test, a model stuck repeating the same lowball offer was stopped on its 6th call.
+
+All limits can be tuned with `ConversationPolicy`. The algorithm is in [spec §12.2](docs/spec_rfc.md).
 
 ## Architecture
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant U as User agent<br/>(WAPClient / wap-mcp / CLI)
-    participant B as Business agent<br/>(WAPServer on FastAPI)
+    participant H as MCP host<br/>(Claude / Cursor / Codex)
+    participant Br as wap-mcp bridge
+    participant B as Business agent<br/>(WAPServer)
     participant T as Business tools / LLM
 
-    U->>B: GET /.well-known/agent.json
-    B-->>U: signed AgentManifest + X-WAP-Signature
-    Note over U: verify signature, domain & origin binding,<br/>expiry, optional pinned key
-    opt pow_required
-        U->>B: GET /wap/v1/challenge
-        B-->>U: {seed, difficulty}
-        Note over U: find nonce: SHA-256(seed‖nonce) = 0000…
+    H->>Br: wap_discover("bakery.example")
+    Br->>B: GET /.well-known/agent.json
+    B-->>Br: signed manifest
+    Note over Br: verify signature, domain & origin binding, expiry, pins
+    Br-->>H: tools/list_changed → bakery_example__reserve_item, …
+    H->>Br: bakery_example__reserve_item({...})
+    Note over Br: loop guard · JSON Schema validation
+    opt proof-of-work required
+        Br->>B: GET /wap/v1/challenge
+        Note over Br: solve SHA-256 puzzle
     end
-    U->>B: POST /wap/v1/interact (signed AgentMessage, Accept: text/event-stream)
-    Note over B: IP limit → version → schema → signature →<br/>replay → agent-key limit → PoW → auth → session
+    Br->>B: POST /wap/v1/interact (signed request)
+    Note over B: rate limit → signature → replay → PoW → auth → loop guard
     B->>T: validated call (only now)
-    T-->>B: result / tokens
-    B-->>U: SSE meta · token* · data* · message (signed)
-    Note over U: verify reply against manifest key + in_reply_to
+    B-->>Br: SSE tokens + signed reply
+    Note over Br: verify reply against manifest key
+    Br-->>H: structured result + verification metadata
 ```
 
 ```text
 wap/
-├── spec/      models.py (Pydantic v2 wire contracts) · crypto.py (Ed25519, canonical JSON) · pow.py (Hashcash engine)
-├── server/    app.py (WAPServer, @action, dispatch) · router.py (endpoints, SSE) · middleware.py · rate_limiter.py
-├── client/    resolver.py (discovery, verification, cache) · session.py (WAPClient, WAPSession) · exceptions.py
-├── mcp/       bridge.py (MCP server: wap_discover, wap_interact, wap_ask)
-└── cli/       main.py (typer + rich)
+├── spec/       models · crypto (Ed25519, canonical JSON) · pow (Hashcash) · conversation (loop guard)
+├── server/     WAPServer + @action · router (WAP endpoints, SSE) · mcp_endpoint (/mcp) · mcp_import · rate_limiter
+├── client/     resolver (discovery + verification) · session (WAPClient, WAPSession) · exceptions
+├── mcp/        bridge (wap-mcp: built-in tools + dynamic per-site tools)
+└── cli/        wap ask · inspect · verify · keygen · serve
 ```
 
-## Quickstart
+## Security at a glance
 
-### 1. Install
+- **Domain authenticity.** Manifests are signed and bound to the exact domain they were fetched from.
+  Endpoints must stay on that origin, discovery never follows redirects, and keys can be pinned.
+- **Reply integrity.** Replies are verified against the *manifest* key and bound to the request. The test
+  suite includes a man-in-the-middle that rewrites prices; the client catches it.
+- **Replay and session hijacking.** Requests are signed and time-bound, with a replay cache. Sessions belong to
+  the key that opened them, and negotiated quotes can only be redeemed in their own session.
+- **Economic defence.** Challenges are stateless and single-use, and their difficulty can't be downgraded.
+  Requests are limited per IP and per agent key. Rejected traffic never reaches your code.
+- **The `/mcp` endpoint** enables the MCP SDK's DNS-rebinding protection for the manifest's domain.
+- **Signed means attributable, not safe.** Treat reply text as data, never as instructions.
 
-```bash
-git clone https://github.com/varadganjoo/WebAgent-Protocol && cd WebAgent-Protocol
-python -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"          # core + server + mcp + test tools
-```
+## Documentation
 
-The distribution is named `wap` with extras: `wap` (client + CLI), `wap[server]` (FastAPI provider), and
-`wap[mcp]` (MCP bridge). Python 3.11+ is required.
-
-### 2. Expose a business agent
-
-```python
-import os
-
-from fastapi import FastAPI
-from pydantic import BaseModel
-from wap.server import WAPServer, ActionContext
-
-wap = WAPServer(
-    name="Golden Crust Bakery",
-    domain="bakery.example",
-    private_key=os.environ["WAP_PRIVATE_KEY"],   # from `wap keygen`
-    require_pow=True,                             # Hashcash gate before any tool runs
-)
-
-class StockLevel(BaseModel):
-    item: str
-    available: int
-    unit_price: float
-
-@wap.action(name="check_pastry_stock", description="Units available right now.")
-async def check_pastry_stock(item: str) -> StockLevel:        # → input & output JSON Schema
-    row = await db.fetch_stock(item)
-    return StockLevel(item=row.name, available=row.qty, unit_price=row.price)
-
-@wap.action(name="reserve_item", description="Hold pastries for 30 minutes.")
-async def reserve_item(item: str, quantity: int = 1, ctx: ActionContext = None) -> dict:
-    ...                                          # ctx: session state, principal, client IP
-
-@wap.intent                                      # optional: free-text requests → your LLM / router
-async def front_desk(intent: str, ctx: ActionContext):
-    async for token in my_llm.stream(intent, tools=ctx.server.actions):
-        yield token                              # streamed to the client as SSE `token` events
-
-app = FastAPI()
-wap.mount(app)   # adds /.well-known/agent.json, /wap/v1/interact, /wap/v1/challenge
-```
-
-Actions can be `async` or sync functions, generators, or async generators. They can return a `str`, a `dict`,
-a Pydantic model, or `ActionResult(content=..., data=...)`. Parameters of type `ActionContext` are injected
-and never exposed in the schema. For non-FastAPI ASGI apps, wrap them with
-`WAPDiscoveryMiddleware(app, wap)` to publish the manifest.
-
-### 3. Talk to it from Python
-
-```python
-from wap import WAPClient
-
-async with WAPClient() as client:
-    manifest = await client.discover("bakery.example")          # verified & cached
-
-    # stream a free-text request
-    async for event in client.query("bakery.example", "Any sourdough croissants left?"):
-        if event.type == "token":
-            print(event.text, end="")
-
-    # call a capability: payload validated against input_schema before sending, PoW solved automatically
-    stock = await client.invoke("bakery.example", "check_pastry_stock", {"item": "Sourdough Croissant"})
-    print(stock.structured_data, stock.verified)
-
-    # multi-turn negotiation with server-side session state
-    session = client.session("bakery.example")
-    offer = await session.send(capability_id="negotiate_bulk_price",
-                               payload={"item": "Sourdough Croissant", "quantity": 12, "offered_unit_price": 3.6})
-```
-
-Errors are typed: `ManifestNotFound`, `VerificationFailed`, `CapabilityNotFound`, `SchemaValidationError`,
-`RateLimited` (with `.retry_after`), `AuthRequired`, `ProofOfWorkFailed`, and `ProtocolError`.
-
-### 4. Use the CLI
-
-```bash
-wap keygen --out bakery.key                       # Ed25519 key pair (file mode 0600)
-wap inspect localhost:8000                        # manifest + capability schemas
-wap verify  bakery.example --expect-key <hex>     # every authenticity check, itemised
-wap ask localhost:8000 "hold 2 almond croissants for Ada"
-wap ask localhost:8000 -c check_pastry_stock -d '{"item": "Baguette"}' --json
-wap serve examples.bakery_server:app --port 8000
-```
-
-### 5. Connect Claude, Cursor, or Codex (MCP)
-
-The `wap-mcp` command runs an MCP server over stdio with three tools:
-
-* `wap_discover(domain)`: returns the verified manifest and capability schemas.
-* `wap_interact(domain, capability, parameters, session_id?)`: executes a capability and returns verified JSON.
-* `wap_ask(domain, query, session_id?)`: sends a free-text request.
-
-**Claude Desktop** (`claude_desktop_config.json`), **Cursor** (`.cursor/mcp.json`):
-
-```json
-{
-  "mcpServers": {
-    "webagent": {
-      "command": "wap-mcp",
-      "env": { "WAP_BLOCK_PRIVATE_NETWORKS": "1" }
-    }
-  }
-}
-```
-
-**Claude Code:** `claude mcp add webagent -- wap-mcp`
-
-**Codex** (`~/.codex/config.toml`):
-
-```toml
-[mcp_servers.webagent]
-command = "wap-mcp"
-env = { WAP_BLOCK_PRIVATE_NETWORKS = "1" }
-```
-
-The bridge reads the following environment variables:
-
-| Variable | Purpose |
+| | |
 |---|---|
-| `WAP_AGENT_KEY` | Hex Ed25519 private key for signing requests. If unset, an ephemeral key is used. |
-| `WAP_BLOCK_PRIVATE_NETWORKS` | Set to `1` to refuse domains that resolve to private or loopback IPs. This is the SSRF guard, recommended when a model picks the domains. Leave it off to reach `localhost` demos. |
-| `WAP_ALLOW_INSECURE` | Allows plain HTTP to non-loopback hosts. |
-| `WAP_PINNED_KEYS` | JSON object `{"domain": "<hex key>"}`. |
-| `WAP_AUTH_TOKENS` | JSON object `{"domain": "<bearer token>"}`, used for `requires_auth` capabilities. |
+| [`docs/spec_rfc.md`](docs/spec_rfc.md) | WAP/1.0 specification: headers, errors, state machines, security |
+| [`docs/mcp_extension.md`](docs/mcp_extension.md) | The MCP extension proposal (`io.webagent/wap`) |
+| [`docs/whitepaper.md`](docs/whitepaper.md) | *Beyond Scraping*: motivation, design, measured benchmarks |
+| [`CHANGELOG.md`](CHANGELOG.md) · [`CONTRIBUTING.md`](CONTRIBUTING.md) · [`SECURITY.md`](SECURITY.md) | Project docs |
 
-## The demo: a shopper negotiating with a bakery
-
-```bash
-python examples/bakery_server.py        # terminal 1
-python examples/shopper_agent.py        # terminal 2
-```
-
-```text
-───────────────────────────── Golden Crust Bakery ──────────────────────────────
-verified manifest for localhost:8000 · key SHA256:0255a81d69f4b1da18e787b70b9fe6f2
-proof-of-work: difficulty 4 · capabilities: get_menu, check_pastry_stock, negotiate_bulk_price, reserve_item
-
-› Do you have Sourdough Croissants today?
-Yes! 24 x Sourdough Croissant available at $4.50 each.
-
-check_pastry_stock → 24 available at $4.50 (PoW solved: True, 0.01s)
-     Negotiating 12 x Sourdough Croissant
-┏━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━━┓
-┃ round ┃ we offer ┃ bakery says   ┃ counter ┃
-┡━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━━┩
-│ 1     │ $3.60    │ counter_offer │ $4.05   │
-│ 2     │ $3.83    │ final_offer   │ $4.05   │
-│ 3     │ $4.05    │ accepted      │ —       │
-└───────┴──────────┴───────────────┴─────────┘
-
-✔ reservation confirmed 12 x Sourdough Croissant @ $4.05 = $48.60
-reservation token: RSV-49A842BF02D8B18E
-```
-
-## Security model at a glance
-
-* **Domain authenticity.** The manifest is signed with the domain's Ed25519 key and bound to the exact
-  authority it was fetched from. Interaction URLs must stay on that origin, and discovery never follows
-  redirects. Keys can be pinned.
-* **Reply integrity.** Every reply, including every SSE final message, is signed and verified against the
-  *manifest* key, then bound to the request with `in_reply_to`. Streamed tokens are provisional until the
-  signed message arrives. A man-in-the-middle test in the suite confirms that tampered replies are rejected.
-* **Request integrity.** Requests are signed by a per-client agent key. Each carries a ±300 s timestamp
-  window and a `message_id` replay cache. Sessions are bound to the key that opened them.
-* **Economic defence.** Challenges are stateless and HMAC-authenticated. The difficulty is bound into the
-  seed and each seed can be used once. Requests are also limited per IP and per verified agent key, using a
-  sliding window combined with a token bucket. The pipeline runs the cheapest checks first, so no business
-  code runs for rejected traffic.
-* **Untrusted content.** Signed means *attributable*, not *safe*. Treat reply text as data.
-
-Details: [spec §13](docs/spec_rfc.md#13-security-considerations).
+Benchmarks (`python examples/benchmark.py`) show that one WAP query puts about **24× fewer tokens** into the
+model's context than the page's raw HTML. Proof-of-work verification is roughly **750× cheaper** than solving
+at the default difficulty (≈ 42 µs vs ≈ 32 ms). The whitepaper gives the method and its caveats.
 
 ## Development
 
 ```bash
-pytest -q                          # 176 tests: spec, crypto, PoW, rate limits, server, client, e2e, MCP, CLI
-ruff check wap examples tests && ruff format --check wap examples tests
-python examples/benchmark.py       # regenerate whitepaper numbers
+pip install -e ".[dev]"
+pytest -q                                   # 215 tests: spec, crypto, PoW, server, client, MCP, loops, CLI
+ruff check . && ruff format --check .
 ```
 
-The test suite runs entirely in-process through `httpx.ASGITransport`, with no network or ports. It covers
-hostile manifests (forged, re-keyed, expired, off-origin, redirected, oversized), replay, session hijacking,
-PoW downgrade and reuse, concurrent over-booking, and reply tampering in both JSON and SSE modes.
+The tests run in-process, with no network or ports. They include the official MCP client talking to `/mcp`
+over streamable HTTP, and adversarial cases: forged or re-keyed manifests, tampered replies, replays, session
+hijacking, over-booking races, and looping agents. Contributions are welcome; see
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT © Varad Ganjoo. Free to use, modify, and ship.

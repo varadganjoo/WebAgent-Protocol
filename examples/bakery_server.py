@@ -43,6 +43,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
 from wap.server import ActionContext, ActionResult, KeywordIntentRouter, WAPProtocolError, WAPServer
+from wap.spec.conversation import ConversationPolicy
 from wap.spec.models import ErrorCode, RateLimitPolicy
 
 HOLD_SECONDS = 30 * 60
@@ -198,6 +199,7 @@ def create_bakery(
     rate_limit: RateLimitPolicy | None = None,
     inventory: Inventory | None = None,
     mcp_require_pow: bool | None = False,
+    conversation_policy: ConversationPolicy | None = None,
 ) -> tuple[WAPServer, FastAPI, Inventory]:
     """Build the bakery agent. Returns ``(wap_server, fastapi_app, inventory)``."""
     inv = inventory or default_inventory()
@@ -212,6 +214,7 @@ def create_bakery(
         # Generic MCP clients (Claude Desktop, Cursor...) cannot solve proof-of-work, so the /mcp
         # endpoint relies on rate limits and loop protection; the WAP endpoint keeps PoW.
         mcp_require_pow=mcp_require_pow,
+        conversation_policy=conversation_policy,
     )
 
     @wap.action(name="get_menu", description="List every pastry with its price and live availability.")

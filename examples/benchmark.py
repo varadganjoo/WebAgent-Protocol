@@ -39,6 +39,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from examples.bakery_server import create_bakery, default_inventory  # noqa: E402
 from wap import WAPClient  # noqa: E402
+from wap.spec.conversation import ConversationPolicy  # noqa: E402
 from wap.spec.crypto import Signer, verify_model  # noqa: E402
 from wap.spec.models import AgentMessage, RateLimitPolicy  # noqa: E402
 from wap.spec.pow import PowEngine, solve  # noqa: E402
@@ -52,6 +53,13 @@ def approx_tokens(text: str) -> int:
         stripped = piece.strip()
         total += max(1, (len(stripped) + 3) // 4) if stripped.isalpha() and len(stripped) > 6 else 1
     return total
+
+
+# The latency loop deliberately repeats one identical call, which loop protection would
+# (correctly) stop after a few repeats; a benchmark is a legitimate poller, so it opts out.
+POLLING = ConversationPolicy(
+    max_turns=10_000, max_repeats=10_000, max_identical_requests=10_000, max_repeats_across_sessions=10_000
+)
 
 
 def storefront_html() -> str:
@@ -161,8 +169,9 @@ async def wap_context() -> tuple[str, str, list[float]]:
         private_key=signer.export_private_key(),
         pow_difficulty=3,
         rate_limit=RateLimitPolicy(requests_per_minute=10_000, burst=10_000),
+        conversation_policy=POLLING,
     )
-    async with WAPClient(transport=httpx.ASGITransport(app=app)) as client:
+    async with WAPClient(transport=httpx.ASGITransport(app=app), conversation_policy=POLLING) as client:
         manifest = await client.discover("bakery.example")
         latencies = []
         reply = None
