@@ -91,6 +91,15 @@ def start_server(port: int, workers: int, redis_url: str | None, pow_difficulty:
     )
 
 
+def stop_server(server: subprocess.Popen) -> None:
+    """Stop uvicorn and all of its workers."""
+    if sys.platform == "win32":
+        subprocess.run(["taskkill", "/F", "/T", "/PID", str(server.pid)], capture_output=True, check=False)
+    else:
+        os.killpg(server.pid, signal.SIGTERM)
+    server.wait(timeout=15)
+
+
 async def wait_ready(base: str, timeout: float = 30.0) -> None:
     deadline = time.time() + timeout
     async with httpx.AsyncClient() as http:
@@ -244,8 +253,7 @@ async def run(args: argparse.Namespace) -> None:
         replays = await replay_probe(base, args.probes)
         reuses = await pow_reuse_probe(base, args.probes)
     finally:
-        os.killpg(server.pid, signal.SIGTERM)
-        server.wait(timeout=15)
+        stop_server(server)
     store = "redis" if args.redis_url else "memory"
     row = [
         args.workers,

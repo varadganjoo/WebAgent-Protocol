@@ -440,7 +440,7 @@ def create_bakery(
 
     @app.get("/")
     async def home() -> dict[str, str]:
-        return {"bakery": wap.name, "agent_manifest": "/.well-known/agent.json"}
+        return {"bakery": wap.name, "agent_manifest": "/.well-known/wap.json"}
 
     wap.mount(app)
     return wap, app, inv
@@ -472,5 +472,5 @@ if __name__ == "__main__":
     import uvicorn
 
     port = int(os.environ.get("PORT", "8000"))
-    print(f"Golden Crust Bakery agent · key {wap.signer.fingerprint} · http://localhost:{port}/.well-known/agent.json")
+    print(f"Golden Crust Bakery agent · key {wap.signer.fingerprint} · http://localhost:{port}/.well-known/wap.json")
     uvicorn.run(app, host=os.environ.get("HOST", "127.0.0.1"), port=port)

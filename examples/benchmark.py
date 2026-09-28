@@ -37,7 +37,7 @@ import httpx
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from examples.bakery_server import create_bakery, default_inventory  # noqa: E402
+from examples.bakery_server import Inventory, create_bakery, default_inventory  # noqa: E402
 from wap import WAPClient  # noqa: E402
 from wap.spec.conversation import ConversationPolicy  # noqa: E402
 from wap.spec.crypto import Signer, verify_model  # noqa: E402
@@ -62,9 +62,9 @@ POLLING = ConversationPolicy(
 )
 
 
-def storefront_html() -> str:
-    """A server-rendered bakery storefront with the usual page furniture."""
-    inventory = default_inventory()
+def storefront_html(inventory: Inventory | None = None) -> str:
+    """A server-rendered bakery storefront with the usual page furniture (live stock if given ``inventory``)."""
+    inventory = inventory or default_inventory()
     cards = []
     for i, p in enumerate(inventory.pastries.values()):
         cards.append(
@@ -184,6 +184,7 @@ async def wap_context() -> tuple[str, str, list[float]]:
 
 
 def main() -> None:
+    sys.stdout.reconfigure(encoding="utf-8")  # tables use ≈ and × (Windows defaults to a legacy codepage)
     page = storefront_html()
     text = visible_text(page)
     manifest_json, reply_json, latencies = asyncio.run(wap_context())

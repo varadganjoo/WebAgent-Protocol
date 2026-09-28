@@ -1,0 +1,10 @@
+.git
+.venv
+.env
+dist
+build
+docs/evidence
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.ruff_cache

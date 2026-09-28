@@ -209,6 +209,22 @@ class TestUserSide:
         assert STOP_INSTRUCTION in stopped[0].content[0].text
         assert not other.is_error  # a genuinely different request still works
 
+    async def test_bridge_stops_a_model_that_hops_sessions(self, keypair) -> None:
+        """Seen with a real model: after the final offer it drops the session id to start over."""
+        _, app, _ = create_bakery(BAKERY, private_key=keypair.private_key, require_pow=False)
+        bridge = WAPBridge(client_for(app))
+        args = {"item": ITEM, "quantity": 12, "offered_unit_price": 3.6}
+        outcomes = []
+        for _ in range(3):
+            first = await bridge.interact(BAKERY, "negotiate_bulk_price", args)
+            outcomes.append(first)
+            session_id = first.get("session_id")
+            outcomes += [await bridge.interact(BAKERY, "negotiate_bulk_price", args, session_id) for _ in range(2)]
+        await bridge.aclose()
+        stopped = [i for i, o in enumerate(outcomes, 1) if not o["ok"]]
+        assert stopped and stopped[0] == 6, [o.get("error", {}).get("type") for o in outcomes]
+        assert outcomes[5]["error"]["type"] == "LoopDetected"
+
     async def test_bridge_stops_repeated_failing_calls(self, keypair) -> None:
         _, app, _ = create_bakery(BAKERY, private_key=keypair.private_key, require_pow=False)
         bridge = WAPBridge(client_for(app), conversation_policy=ConversationPolicy(max_repeats=2))

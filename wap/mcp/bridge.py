@@ -57,7 +57,7 @@ import re
 import secrets
 import sys
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
 import anyio
@@ -249,6 +249,7 @@ class WAPBridge:
         self.domains = DomainPolicy(self.config.allowed_domains, self.config.blocked_domains)
         # Model-facing loop guard: the LLM driving these tools is the party most likely to loop.
         self.conversation_policy = conversation_policy or ConversationPolicy(max_turns=self.config.max_turns)
+        self._site_policy = replace(self.conversation_policy, max_turns=2**31)
         self._guards: dict[tuple[str, str], ConversationGuard] = {}
         self._confirm_secret = secrets.token_bytes(32)
 
@@ -264,25 +265,35 @@ class WAPBridge:
 
     # ------------------------------------------------------------------ guards and policy
 
-    def _guard(self, domain: str, session_id: str | None) -> ConversationGuard:
-        key = (domain.strip().lower(), session_id or "")
-        guard = self._guards.get(key)
-        if guard is None:
-            guard = self._guards[key] = ConversationGuard(self.conversation_policy)
-        return guard
+    def _guards_for(self, domain: str, session_id: str | None) -> list[ConversationGuard]:
+        """The session's guard, plus one per site across sessions.
+
+        A bridge serves one user, so the site-wide guard applies the same repetition limits (without
+        the turn cap): a model that drops the session id to start a negotiation over is still stopped.
+        """
+        domain = domain.strip().lower()
+        keys = {(domain, session_id or ""): self.conversation_policy, (domain, "*"): self._site_policy}
+        guards = []
+        for key, policy in keys.items():
+            if key not in self._guards:
+                self._guards[key] = ConversationGuard(policy)
+            guards.append(self._guards[key])
+        return guards
 
     async def _guarded(self, domain: str, session_id: str | None, request_fp: str, run: Any) -> dict[str, Any]:
-        """Run one tool call under the loop guard; errors count as outcomes too."""
-        guard = self._guard(domain, session_id)
+        """Run one tool call under the loop guards; errors count as outcomes too."""
+        guards = self._guards_for(domain, session_id)
         try:
-            guard.check(request_fp)
+            for guard in guards:
+                guard.check(request_fp)
         except ConversationLimitError as exc:
             kind = LoopDetected if exc.reason == "loop_detected" else ConversationLimitReached
             stopped = kind(exc.reason, exc.message, details=exc.details)
             return {"ok": False, "error": {**_error(stopped)["error"], "code": exc.reason}}
         outcome = await run()
         stable = {k: v for k, v in outcome.items() if k not in _VOLATILE}
-        guard.record(request_fp, outcome_fingerprint("outcome", stable))
+        for guard in guards:
+            guard.record(request_fp, outcome_fingerprint("outcome", stable))
         return outcome
 
     def check_domain(self, domain: str) -> dict[str, Any] | None:
