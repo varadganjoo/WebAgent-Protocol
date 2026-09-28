@@ -219,7 +219,9 @@ How each side enforces it:
   `conversation_limit` (429).
 - **The user's side** stops itself before sending, and counts error replies as replies.
 - **In Claude or Cursor**, the model receives a tool error telling it to *stop, summarize, and report back to
-  the user*. In a live test, a model stuck repeating the same lowball offer was stopped on its 6th call.
+  the user*. In our [evaluation](docs/evidence/agent-eval/summary.md), a model told to keep repeating a
+  lowball offer was stopped on its 6th call in 5 of 5 runs, and the business never received more than five
+  of its requests, even when the model ignored the stop instruction and kept trying.
 
 All limits can be tuned with `ConversationPolicy`. The algorithm is in [spec §12.2](docs/spec_rfc.md).
 
@@ -286,12 +288,26 @@ wap/
 | [`docs/spec_rfc.md`](docs/spec_rfc.md) | WAP/1.0 specification: headers, errors, state machines, security |
 | [`docs/test-vectors.json`](docs/test-vectors.json) | Fixed keys, documents, canonical bytes and signatures for other implementations |
 | [`docs/mcp_extension.md`](docs/mcp_extension.md) | The MCP extension proposal (`io.webagent/wap`) |
-| [`docs/whitepaper.md`](docs/whitepaper.md) | *Beyond Scraping*: motivation, design, measured benchmarks |
+| [`docs/whitepaper.md`](docs/whitepaper.md) | *Beyond Scraping*: motivation, design, and an evaluation with a real model |
+| [`docs/evidence/`](docs/evidence/README.md) | Every measurement behind the whitepaper, with agent transcripts and how to reproduce them |
 | [`CHANGELOG.md`](CHANGELOG.md) · [`CONTRIBUTING.md`](CONTRIBUTING.md) · [`SECURITY.md`](SECURITY.md) | Project docs |
 
-Benchmarks (`python examples/benchmark.py`) show that one WAP query puts about **24× fewer tokens** into the
-model's context than the page's raw HTML. Proof-of-work verification is roughly **750× cheaper** than solving
-at the default difficulty (≈ 42 µs vs ≈ 32 ms). The whitepaper gives the method and its caveats.
+## What we measured
+
+We ran a real model (`gpt-6-luna`) against a live bakery server in Docker, with nothing mocked
+([results](docs/evidence/agent-eval/summary.md), [method](docs/evidence/README.md)):
+
+| | Result |
+|---|---|
+| Stock-and-price question | all strategies 10/10 correct; WAP used **4.8× fewer** billed input tokens than raw HTML, but **1.7× more** than tag-stripped text |
+| Negotiate and reserve | **5/5** reserved at the negotiated price, every reply signature-verified |
+| User declines | **0 holds** in 10/10 runs (client `confirm` hook and `wap-mcp` elicitation) |
+| Agent told to keep repeating an offer | stopped on the **6th call** in 5/5 runs; the business executed at most 5 |
+| Throughput, 4 workers + Redis | about **600 signed, proof-of-work-gated requests/s** on a laptop, replays accepted exactly once |
+
+Tokens are not WAP's main argument: on a small page a text scraper is cheaper for a read-only question.
+The difference is that the WAP agent can act, safely. The [whitepaper](docs/whitepaper.md#6-evaluation) has
+the details and limitations; `docker build -f evals/Dockerfile -t wap-eval .` reproduces everything.
 
 ## Development
 

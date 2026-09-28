@@ -1,0 +1,17 @@
+date: 2026-09-28 16:22 UTC
+commit: 3d620c2
+python: Python 3.14.7
+kernel: Linux 6.6.87.2-microsoft-standard-WSL2 x86_64
+cpus: 22
+cpu: Intel(R) Core(TM) Ultra 9 185H
+memory: 15.5 GiB
+redis: v=8.0.2
+cryptography==50.0.1
+fastapi==0.141.1
+httpx==0.28.1
+mcp==2.2.0
+openai==3.20.0
+pydantic==2.13.5
+redis==8.1.0
+uvicorn==0.54.0
+webagent-protocol==0.2.0

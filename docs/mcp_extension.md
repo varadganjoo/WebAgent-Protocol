@@ -195,7 +195,7 @@ The bridge handles signatures, proof-of-work, sessions, idempotency keys and loo
   result can be stored, forwarded to another agent, or shown in a dispute, and it survives TLS-terminating
   intermediaries.
 * **Why proof-of-work rather than API keys?** Keys require registration, which defeats open discovery. Proof
-  of work is permissionless, costs an honest client milliseconds (difficulty 4 ≈ 32 ms in Python), and costs
+  of work is permissionless, costs an honest client milliseconds (difficulty 4 ≈ 60 ms in Python on a laptop), and costs
   the server microseconds to verify. It is a floor, not a wall, and composes with authentication for
   sensitive tools.
 * **Why `_meta` and extension settings rather than new methods?** Everything stays backwards compatible. A

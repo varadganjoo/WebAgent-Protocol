@@ -39,6 +39,9 @@ effects, and interoperable signatures. See [docs/configuration.md](docs/configur
   tools, with user confirmation before side effects.
 - `ConfirmationRequest`, `ConfirmationDeclined` and `SchemaValidationError` are exported from `wap`.
 - Python 3.14 support; CI runs Linux on 3.11–3.14 plus Windows and macOS.
+- `evals/agent_eval.py` and `evals/Dockerfile`: a reproducible evaluation with a real language model
+  (scraping vs WAP, negotiation, declined confirmations, loop protection through `wap-mcp`). Results,
+  transcripts, benchmarks and load tests are in `docs/evidence/`.
 
 ### Changed
 - Discovery moves to `/.well-known/wap.json`. `/.well-known/agent.json` is still served and tried by
@@ -61,6 +64,9 @@ effects, and interoperable signatures. See [docs/configuration.md](docs/configur
   output schema) now return it as `structured_data`, not only as text.
 - The test suite passes on Windows (file-mode and subprocess-encoding assumptions).
 - The `wap` CLI no longer crashes on Windows when its output is redirected (it writes UTF-8).
+- `wap-mcp` also guards each site across sessions. In the evaluation a model that reached the bakery's
+  final offer dropped the session id to start the negotiation over, which the per-session guard missed.
+- `examples/load_test.py` runs on Windows; `examples/benchmark.py` output no longer crashes when redirected.
 
 ## [0.1.0] - 2026-09-28
 

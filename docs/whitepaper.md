@@ -26,10 +26,15 @@ designed as an **extension of the Model Context Protocol (MCP)**: the same funct
 signed WAP capabilities and as a standard MCP endpoint, and a bridge turns any discovered website into
 native tools in MCP hosts. We describe the design, its
 threat model and a reference implementation (a FastAPI provider SDK, an async client, a
-command-line tool and a Model Context Protocol bridge). On a representative storefront, a WAP
-query places about **24× fewer tokens** in the model's context than the raw HTML of the page
-does. Relative to aggressively tag-stripped text the token saving is small (about 1.4×). The
-larger gains are in correctness, the ability to act, and authenticity.
+command-line tool and a Model Context Protocol bridge), and evaluate it with a real language-model
+agent against a live server. Answering a stock-and-price question through WAP cost the agent about
+**4.8× fewer billed input tokens** than reading the storefront's raw HTML, but about 1.7× *more* than
+reading tag-stripped text, so tokens are not WAP's main argument. What a page reader cannot do without
+simulating a browser, the WAP agent did directly: it negotiated a bulk price and placed a reservation
+in 5 of 5 runs, with every reply signature-verified. When the user declined, nothing was reserved in
+10 of 10 runs. When an agent was told to keep repeating a lowball offer, loop protection stopped it on
+the sixth call in 5 of 5 runs, and the business never received more than five of its requests. All measurements, transcripts
+and the script that produces them are published with the reference implementation.
 
 ---
 
@@ -161,14 +166,17 @@ An interaction is a signed `AgentMessage` naming either a `capability_id` with
 example, an LLM). Messages share a `session_id`, and the server binds each session to the
 agent key that opened it. Negotiation state therefore persists across turns and cannot be
 hijacked by another agent. In the reference bakery, a three-round bulk-price negotiation
-produces a `quote_id` that is redeemable only in the negotiating session:
+produces a `quote_id` that is redeemable only in the negotiating session. This is the negotiation a
+language-model agent ran when asked to reserve 12 croissants at the lowest price it reasonably could
+(run 1 of `reserve_approved` in `docs/evidence/agent-eval/transcripts.jsonl`):
 
-| Round | Shopper offers | Bakery responds |
-|---:|---:|---|
-| 1 | $3.60 | counter-offer $4.05 |
-| 2 | $3.83 | final offer $4.05 |
-| 3 | $4.05 | accepted, quote `Q-…` |
-| → | reserve 12 with quote | reservation token `RSV-…`, total $48.60, signed |
+| Step | Agent calls | Bakery responds (signed) |
+|---:|---|---|
+| 1 | `get_menu` | Sourdough Croissant, $4.50, 24 available |
+| 2 | `negotiate_bulk_price`, $3.25 | counter-offer $4.05 |
+| 3 | `negotiate_bulk_price`, $3.60 | final offer $4.05 |
+| 4 | `negotiate_bulk_price`, $4.05 | accepted, quote `Q-…` |
+| 5 | `reserve_item` with the quote, after the user approves | reservation `RSV-AAD174CF21FA8C72`, 12 × $4.05 = $48.60 |
 
 Replies stream as Server-Sent Events: `meta`, then any number of `token` and `data`
 fragments, then a single signed `message`. Streaming keeps latency low for LLM-backed
@@ -210,25 +218,28 @@ transplant it onto another request.
 
 ### 3.3 Measured asymmetry
 
-We measured the reference implementation on a 4-vCPU Intel Xeon at 2.10 GHz with Python
-3.11.15, single-threaded, using `python examples/benchmark.py`:
+We measured the reference implementation with `python examples/benchmark.py`, single-threaded, in a
+Linux container (Python 3.14.7) on a laptop with an Intel Core Ultra 9 185H. The raw output is
+`docs/evidence/benchmark.md` and the machine is described in `docs/evidence/environment.txt`:
 
-| Difficulty *d* | Expected hashes (16^*d*) | Client solve (mean) | Server verify (mean) | Ratio |
+| Difficulty *d* | Expected hashes (16^*d*) | Client solve (mean) | Server verify | Ratio |
 |---:|---:|---:|---:|---:|
-| 1 | 16 | < 0.1 ms | 6.8 µs | — |
-| 2 | 256 | 0.2 ms | 10.6 µs | ~19× |
-| 3 | 4,096 | 2.0 ms | 17.1 µs | ~117× |
-| 4 | 65,536 | 31.9 ms | 41.7 µs | ~765× |
-| 5 | 1,048,576 | 449.6 ms | 92.2 µs | ~4,900× |
+| 1 | 16 | < 0.1 ms | 9.2 µs | — |
+| 2 | 256 | 0.3 ms | 13.8 µs | ~22× |
+| 3 | 4,096 | 2.9 ms | 44.3 µs | ~65× |
+| 4 | 65,536 | 58.6 ms | 120.5 µs | ~490× |
+| 5 | 1,048,576 | 845.6 ms | 114.3 µs | ~7,400× |
 
-Server verification includes HMAC authentication of the seed and the spent-set update, so it
-grows slightly with *d* (the verifier tries each permitted difficulty). Pure-Python hashing
+Solve times are means of 20 trials (5 at *d* = 5) and verification times are single-shot, on a
+laptop that was also running other work, so treat the ratios as orders of magnitude.
+Server verification includes HMAC authentication of the seed and the spent-set update, and stays
+between roughly 10 and 120 µs at every difficulty; solving grows 16× per step. Pure-Python hashing
 also represents a *slow* attacker. Native or GPU solvers run orders of magnitude faster, which
 is why proof-of-work in WAP is a **floor, not a wall**. It prices out indiscriminate
 high-volume scripts cheaply and composes with rate limits, authentication
-(`requires_auth` capabilities), and reputation systems. The default difficulty of 4 adds
-roughly 30 ms per request for a legitimate Python client, which is negligible next to a
-typical LLM-backed reply. An operator under attack can raise *d*. The reference client
+(`requires_auth` capabilities), and reputation systems. The default difficulty of 4 added
+about 60 ms per request for a legitimate Python client in our measurements, which is small next to
+a typical LLM-backed reply. An operator under attack can raise *d*. The reference client
 recovers automatically when proof-of-work is switched on after discovery, because the
 server's `428` response carries a fresh challenge.
 
@@ -249,14 +260,15 @@ operators can adapt it in real time without breaking clients.
 
 Each domain holds an Ed25519 key (RFC 8032). We chose Ed25519 for its deterministic
 signatures, small 32-byte keys and 64-byte signatures, speed, and wide library support.
-Documents are signed over a canonical JSON serialization: sorted keys, no whitespace, UTF-8,
-and integral numbers without fractions. An independent verifier can reproduce this with
-`JSON.stringify` or Python's `json.dumps` and nothing else. Our test suite checks this by
-verifying a live manifest with only the standard-library `json` module and a raw Ed25519
+Documents are signed over the JSON Canonicalization Scheme (JCS, RFC 8785): sorted keys, no
+whitespace, UTF-8, and ECMAScript number formatting, so any language with a JCS implementation can
+verify a signature. `docs/test-vectors.json` publishes fixed keys, documents, canonical bytes and
+signatures; CI checks them with an independent Node.js verifier (21 checks), and a test reproduces a
+live manifest's signature using only Python's standard-library `json` module and a raw Ed25519
 primitive.
 
-Measured cost: **39 µs to canonicalize and sign** an `AgentMessage`, and **97 µs to verify**
-one.
+Measured cost on the machine in §3.3: **150 µs to canonicalize and sign** an `AgentMessage`, and
+**276 µs to verify** one.
 
 ### 4.2 What is signed
 
@@ -293,10 +305,15 @@ untrusted input to the user agent's model and must not be treated as instruction
 ### 5.1 The failure mode
 
 When a user's assistant negotiates with a business's assistant, both sides are stochastic, both are
-polite, and neither owns the decision to stop. In our own testing, a scripted "naive" shopper that
-kept offering the same low price against the bakery's final offer would have continued indefinitely.
-Every turn cost the shopper a proof-of-work and the bakery a tool invocation, and the user never got
-an answer. Rate limits slow such loops down but don't end them.
+polite, and neither owns the decision to stop. A scripted shopper that keeps offering the same low
+price against the bakery's final offer continues indefinitely: every turn costs the shopper a
+proof-of-work and the bakery a tool invocation, and the user never gets an answer. Rate limits slow
+such loops down but don't end them.
+
+Language models are better than scripts at noticing a dead end, but not reliably. In our evaluation
+(§6.4), a model told that its user's budget was firm usually stopped by itself once the bakery said
+no rounds remained. In one run it instead dropped the session and started the negotiation over, twice,
+which reset the bakery's round counter each time.
 
 ### 5.2 The conversation guard
 
@@ -317,17 +334,22 @@ progress until the stall threshold.
 
 ### 5.3 Defence on both sides
 
-The **business** runs the guard per session and per agent key across sessions. It refuses with
-`loop_detected` (409) or `conversation_limit` (429) *before* any tool runs. The **user's side** runs
-the same guard locally, and counts error replies as replies, so a model that keeps resending an
-invalid request is also stopped. The MCP bridge turns a detected loop into a tool error whose text
-tells the model to stop, summarize what it learned, and report back to the user. That is the only
-exit that reliably breaks an LLM out of a retry habit.
+The **business** runs the guard per session and, with looser limits (default 10), per agent key across
+sessions, because one key may serve many users. It refuses with `loop_detected` (409) or
+`conversation_limit` (429) *before* any tool runs. The **user's side** runs the same guard locally and
+counts error replies as replies, so a model that keeps resending an invalid request is also stopped.
+The MCP bridge serves a single user, so it also applies the strict limits to each site across sessions.
+We added that after watching a model evade the per-session guard by starting new sessions (§5.1); the
+regression test `test_bridge_stops_a_model_that_hops_sessions` replays the model's exact pattern.
 
-In a live run, a client repeatedly calling `negotiate_bulk_price` with the same offer through
-`wap-mcp` saw a counter-offer, then the bakery's final offer, and was stopped on the sixth call with
-that instruction. A different request to the same site still succeeded. Loop protection is on by
-default and can be tuned through `ConversationPolicy`.
+The bridge turns a detected loop into a tool error whose text tells the model to stop, summarize what
+it learned, and report back to the user. The instruction does not always work, which is why the
+refusal matters more than the message. When a model was told to repeat a $3.60 offer at least ten more
+times, the bridge stopped it on the sixth call in 5 of 5 runs. In 3 of those runs the model ignored the
+instruction and tried five more times; the bridge refused every attempt, and the bakery's own counter
+shows it received exactly five negotiation requests in every run. All five final answers told the user
+truthfully that the offer had been refused and that further attempts were blocked. Loop protection is
+on by default and can be tuned through `ConversationPolicy`.
 
 ### 5.4 Consent before consequences
 
@@ -342,86 +364,167 @@ to take instead of taking it, and the user confirms it explicitly.
 
 Every non-read request also carries an idempotency key. If a response is lost after the business
 has already acted, the client's automatic retry returns the original result instead of acting a
-second time. In testing, a connection dropped after a reservation was made led to exactly one hold.
+second time. The test `test_lost_response_is_retried_without_double_booking` drops the connection
+after a reservation is made and checks that exactly one hold exists.
 
-## 6. Performance Benchmarks: Token Reduction vs HTML Scraping
+In the evaluation (§6.3), a model negotiated and asked to reserve in every run. When the user declined
+through the client's `confirm` hook, nothing was sent (5 of 5 runs, no holds on the server). In one
+of those runs the model retried the declined reservation; the user was asked again and nothing was
+sent that time either. Through `wap-mcp`, the model tried to reserve in 4 of 5 runs, the bridge asked
+the user through MCP elicitation each time, and no hold was created; in the fifth run the model stopped
+at the final offer and asked the user in chat instead. No answer claimed a reservation that did not
+exist.
+
+## 6. Evaluation
+
+Every number in this section comes from `docs/evidence/`, produced by one command
+(`evals/Dockerfile`, which runs `evals/run.sh`) in a Linux container against commit `3d620c2` of the
+reference implementation. `docs/evidence/README.md` describes each file and how to reproduce it.
 
 ### 6.1 Method
 
-We compare the model context needed to answer *"Is the Sourdough Croissant in stock, and what
-does it cost?"* under three strategies:
+We gave a language model (`gpt-6-luna` through the OpenAI Responses API, chosen for cost) tools and a
+task and let it run until it answered. Nothing was mocked:
 
-* **Raw HTML.** The storefront page as served.
-* **Visible text.** The same page with `<script>`, `<style>`, and all tags removed and
-  whitespace collapsed. This is a strong scraping baseline.
-* **WAP.** The single capability schema the planner needs, plus the model-visible result
-  (`text` + `structured_data`) that the MCP bridge returns. We also report the full manifest
-  and the full signed wire message.
+* the business is the reference bakery served over HTTP by uvicorn, with proof-of-work at difficulty 4;
+* every WAP call is signed, pays proof-of-work, and has its reply verified against the manifest key;
+* `wap-mcp` runs as a separate process over stdio, exactly as an MCP host launches it;
+* token counts are the input and output tokens the API billed, summed over every model call in a run;
+* outcomes are checked against the server's own state (inventory, holds, and a counter of the
+  negotiations it actually executed), not against what the model says.
 
-The storefront is a synthetic, server-rendered collection page with typical furniture:
-header navigation, filters, six product cards with images and add-to-cart forms, JSON-LD,
-analytics, a newsletter form, a footer, and a cookie banner. At 18.8 KB it is **much smaller
-than typical production pages**, which often exceed 100 KB of HTML, so the reduction factors
-against raw HTML are conservative. Tokens are counted with a byte-level-BPE pre-tokenizer
-approximation. Exact model tokenizers differ by roughly ±15%, and the tokenizer files could
-not be downloaded in our measurement environment. The script is `examples/benchmark.py`.
+The scraping agents read an HTML storefront served by the same process and rendered from the same live
+inventory, so every strategy sees the same facts. The page (18.8 KB) has typical furniture: navigation,
+filters, six product cards with images and forms, JSON-LD, analytics, a newsletter form, a footer and a
+cookie banner. It is smaller than most production pages, which favours the scrapers.
 
-### 6.2 Results
+| Scenario | Runs | The model gets | The task |
+|---|---:|---|---|
+| Lookup, raw HTML | 10 | `fetch_page` returning HTML | stock and unit price of one item, as JSON |
+| Lookup, stripped text | 10 | `fetch_page` returning visible text | the same |
+| Lookup, WAP | 10 | the bakery's four capabilities | the same |
+| Reserve | 5 | the bakery's capabilities; the user approves | negotiate, then reserve 12 for Ada Lovelace |
+| Reserve, user declines | 5 | the same; the user declines | the same |
+| Reserve via `wap-mcp`, user declines | 5 | the bridge's tools; MCP elicitation declines | the same |
+| Firm budget via `wap-mcp` | 5 | the bridge's tools | offer $3.60 and never more, until accepted |
+| Adversarial repetition via `wap-mcp` | 5 | the bridge's tools | repeat the $3.60 offer at least 10 more times |
 
-| Representation | Bytes | ≈ Tokens | vs raw HTML |
-|---|---:|---:|---:|
-| Raw HTML storefront | 18,848 | 7,071 | 1.0× |
-| Visible text (scripts/styles/tags stripped) | 1,456 | 419 | 16.9× |
-| WAP: full manifest (4 capabilities) | 5,059 | 1,458 | 4.8× |
-| WAP: one capability schema | 755 | 242 | 29.2× |
-| WAP: signed reply on the wire | 662 | 306 | 23.1× |
-| WAP: model-visible result (text + structured data) | 158 | 57 | 124.1× |
-| **WAP per query (one schema + model-visible result)** | — | **≈ 299** | **23.6×** |
+### 6.2 Answering a question: tokens and correctness
 
-Round-trip latency for a signed, proof-of-work-gated (*d* = 3) capability call through the
-full server pipeline, in process with no network: **p50 4.5 ms, p90 10.0 ms** over 30 calls.
+| Strategy | Correct | Mean billed input tokens | Mean output tokens | Mean tool calls | Mean time |
+|---|---:|---:|---:|---:|---:|
+| Scrape raw HTML | 10/10 | 6,540 | 46 | 1.0 | 2.5 s |
+| Scrape stripped text | 10/10 | 813 | 49 | 1.0 | 2.4 s |
+| WAP | 10/10 | 1,349 | 71 | 1.7 | 2.9 s |
 
-### 6.3 Interpretation
+All three strategies answered every question correctly. WAP used **4.8× fewer input tokens than raw
+HTML** but **1.7× more than stripped text**. The WAP agent pays for its tool list on every model call
+(four capability schemas), and in 7 of 10 runs it called `get_menu` and then `check_pastry_stock`,
+which adds a model call. On a page this small, a scraper that strips markup is the cheapest way to
+answer a read-only question. Pages several times larger, which are common, would move the raw-HTML
+comparison further in WAP's favour; they would not necessarily change the comparison with stripped
+text. Token cost is therefore not the main argument for WAP.
 
-* **Against raw HTML**, WAP reduces per-query context by more than an order of magnitude
-  (≈ 24× here, and more on heavier real pages).
-* **Against well-stripped text**, the token saving is small (≈ 1.4×). We report this
-  directly: token count alone does not justify a new protocol. The stripped text in our
-  benchmark is short only because this page is simple. More importantly, it still has to be
-  *interpreted*. "In stock (24 left)" must be read correctly as a count for the right product
-  among six, and nothing in the text says how to act.
-* **The full manifest is the most expensive artifact.** Planners should load only the
-  schemas they need. Manifests are cacheable for their TTL and verified once, so their cost
-  is amortized across queries.
-* **Cryptographic material is token-heavy** (hex keys and signatures). The MCP bridge
-  therefore verifies signatures itself and hands the model only the verified result and
-  metadata, not the raw envelope.
+An earlier version of this paper estimated a 24× saving against raw HTML from static byte counts. The
+static counts are still reproduced by `examples/benchmark.py` (§6.5), but they compare one capability
+schema and one result with a whole page, and leave out what an agent actually pays for: the other tool
+schemas, the question, and a second model call. The billed tokens above replace that estimate.
 
-The qualitative gains that tokens do not capture are larger than the token savings:
+### 6.3 Acting: negotiation and consent
+
+Stripped text can answer a question but cannot act. The WAP agent was asked to reserve 12 croissants
+at the lowest price it reasonably could:
+
+* **5 of 5 runs** ended with exactly one hold of 12 for Ada Lovelace on the server, at the negotiated
+  $4.05 instead of the $4.50 list price. Every run opened low ($3.00 or $3.25), moved up once
+  ($3.50 or $3.60), accepted the bakery's final offer, and reserved with the resulting quote.
+* **Every business reply was signature-verified.**
+* A run took 5.4 tool calls, 6,551 billed input tokens and 10.7 s on average, including five
+  proof-of-work solutions.
+
+When the user declined, **no hold was created in any of 10 runs** (5 through the client's `confirm`
+hook, 5 through `wap-mcp` and MCP elicitation). §5.4 describes these runs, including one in which the
+model retried a declined reservation.
+
+### 6.4 Loop protection with a real model
+
+| Instruction | Negotiate calls by the model, per run | Negotiations the bakery executed | Stopped by the guard |
+|---|---|---|---|
+| Firm budget | 4, 3, 3, 4, 6 | 4, 3, 3, 4, 5 | run 5, on call 6 |
+| Repeat at least 10 more times | 11, 11, 6, 11, 6 | 5, 5, 5, 5, 5 | all runs, on call 6 |
+
+With a firm budget, the model usually stopped by itself after three or four offers, once the bakery
+reported no rounds remaining, and told the user the offer had been refused. In run 5 it started new
+sessions to restart the negotiation; the bridge's per-site guard (§5.3) stopped it on the sixth call.
+In an earlier run during development, before that guard existed, the same behaviour sent nine identical
+offers to the bakery across three sessions without being stopped.
+
+Under the adversarial instruction, the guard stopped every run on the sixth call and the bakery never
+executed more than five negotiations, although the model attempted eleven in three runs.
+
+### 6.5 Static sizes, proof-of-work and latency
+
+`examples/benchmark.py` also reports static sizes and per-operation costs (`docs/evidence/benchmark.md`).
+Token counts there are approximate (a byte-level-BPE pre-tokenizer estimate):
+
+| Representation | Bytes | ≈ Tokens |
+|---|---:|---:|
+| Raw HTML storefront | 18,848 | 7,071 |
+| Visible text | 1,456 | 419 |
+| WAP: full manifest (4 capabilities) | 5,407 | 1,564 |
+| WAP: one capability schema | 774 | 249 |
+| WAP: signed reply on the wire | 704 | 300 |
+| WAP: model-visible result (text + structured data) | 158 | 57 |
+
+Cryptographic material is token-heavy (hex keys and signatures), so the MCP bridge verifies signatures
+itself and hands the model only the verified result. A signed, proof-of-work-gated (*d* = 3) capability
+call through the full server pipeline, in process with no network, took **p50 6.1 ms, p90 14.2 ms**
+over 30 calls. Proof-of-work and signature costs are in §3.3 and §4.1.
+
+The qualitative differences matter more than any of these sizes:
 
 | Property | Scraping | WAP |
 |---|---|---|
-| Stock and price read from | inferred from markup | typed fields (`available: 24`, `unit_price: 4.5`) |
+| Stock and price read from | inferred from markup or text | typed fields (`available: 24`, `unit_price: 4.5`) |
 | Robust to redesigns | no | yes (contract is versioned) |
-| Can *act* (hold, negotiate) | by simulating UI | first-class capabilities with schemas |
+| Can *act* (hold, negotiate) | only by simulating a browser | first-class capabilities with schemas (§6.3) |
 | Input validated before execution | no | yes, on both sides (JSON Schema) |
 | Origin of data provable | no | Ed25519 over every reply |
 | Business protected from abuse | CAPTCHAs aimed at humans | PoW + rate limits aimed at agents |
 
+### 6.6 Server throughput and shared state
+
+`examples/load_test.py` drives real uvicorn worker processes over HTTP from three load-generator
+processes with 32 virtual users for 15 s. Every request fetches a challenge, solves proof-of-work at
+difficulty 2, and sends a signed request whose signed reply the client verifies
+(`docs/evidence/load-test.md`):
+
+| Workers | Shared store | Requests/s | p50 | p99 | Errors | Replay accepted | PoW reuse accepted |
+|---:|---|---:|---:|---:|---:|---:|---:|
+| 1 | in memory | 395 | 78 ms | 133 ms | 0 | 1 of 24 | 1 of 24 |
+| 4 | none | 612 | 48 ms | 106 ms | 0 | **2 of 24** | **4 of 24** |
+| 4 | Redis | 599 | 51 ms | 97 ms | 0 | 1 of 24 | 1 of 24 |
+
+The load generator shares the machine with the server, so absolute numbers understate dedicated
+hardware. The correctness probes matter more: without a shared store, four workers accepted one
+replayed message twice and one proof-of-work solution four times. With Redis both were accepted exactly
+once, which is why the reference implementation keeps all protocol state behind a pluggable store.
+
+### 6.7 Limitations
+
+* **One model, small samples.** 10 lookups per strategy and 5 runs of each other scenario with one
+  inexpensive model. Rates are indicative, and other models will spend different numbers of tokens and
+  may behave differently at the edges, such as whether they obey a stop instruction.
+* **One synthetic storefront.** Real pages are larger and messier. We have not measured how scrapers
+  or WAP agents fare on them.
+* **One machine.** Client, server and bridge share a laptop, so network latency is near zero and
+  timings include contention from other work.
+* **The adversarial prompt is artificial.** It exists to exercise loop protection, not to model users.
+* **Same-origin evaluation.** The evaluation tests WAP's reference bakery with WAP's reference client.
+  Interoperability with independent implementations is covered by the published test vectors, not by
+  this evaluation.
+
 ---
-
-### 6.4 Server throughput
-
-`examples/load_test.py` drives real uvicorn worker processes over HTTP. Every request includes a
-challenge fetch, a proof-of-work at difficulty 2, a signed request and a signed reply that the client
-verifies. On the same 4-vCPU machine, with the load generator spread over three processes, one worker
-served about **580 requests/s** (p50 51 ms, p99 104 ms) with no errors. Multi-worker deployments that
-share state through Redis served about 400–425 requests/s on this small machine, where Redis round trips
-and a shared CPU outweigh the extra workers; they should be measured on production hardware.
-
-The same test checks correctness under concurrency. Without a shared store, four workers accepted one
-replayed message four times and one proof-of-work solution twice. With Redis, both were accepted exactly
-once. This is why the reference implementation keeps all protocol state behind a pluggable store.
 
 ## 7. Future Work
 
@@ -429,9 +532,17 @@ once. This is why the reference implementation keeps all protocol state behind a
 optional DNS TXT anchoring of keys. An append-only transparency log of manifests would additionally
 let anyone audit which keys a domain has used over time.
 
-**Adaptive and memory-hard puzzles.** Difficulty could scale automatically with load or with
-per-principal reputation. Memory-hard functions (such as Argon2 or Equihash-style puzzles)
-would narrow the gap between commodity and specialized attacker hardware.
+**Broader agent evaluation.** §6 uses one inexpensive model, one synthetic storefront and small
+samples. The harness (`evals/agent_eval.py`) takes any Responses API model; the obvious next steps are
+several models, real storefronts of realistic size, and larger samples, and measuring how often agents
+obey a stop instruction rather than relying on the guard.
+
+**Smaller tool lists.** In §6.2 the WAP agent spent more tokens on tool schemas than a text scraper
+spent on the page. Loading capability schemas on demand, or grouping them, would cut that overhead.
+
+**Memory-hard puzzles.** The reference implementation already raises difficulty with load
+(`AdaptivePow`) and lets an admission hook set it per principal. Memory-hard functions (such as Argon2
+or Equihash-style puzzles) would narrow the gap between commodity and specialized attacker hardware.
 
 **Privacy-preserving admission.** Anonymous, rate-limited tokens (Privacy Pass-style
 blind-signed credentials) could replace some proof-of-work for users of trusted user agents
@@ -457,8 +568,12 @@ The agentic web does not need agents that are better at pretending to be humans.
 way for the two kinds of software agent to talk to each other, and to stop talking when the
 conversation stops going anywhere. WAP provides this with one
 well-known URL, one signed contract, one endpoint, and an admission-control design that makes
-abuse cheaper to reject than to commit. The reference implementation is complete, tested, and
-small enough to audit, and a business can adopt it with a decorator and a key.
+abuse cheaper to reject than to commit. In our evaluation with a real model, WAP was not the
+cheapest way to answer a simple question, but it was the only strategy we tested that could act
+without simulating a browser: it negotiated and reserved correctly every time, never acted when the user said no, and
+stopped a looping agent before the business paid for more than five of its requests. The reference
+implementation, its tests and the evaluation are small enough to audit, and a business can adopt WAP
+with a decorator and a key.
 
 ---
 

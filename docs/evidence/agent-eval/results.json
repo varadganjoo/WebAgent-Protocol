@@ -1,0 +1,141 @@
+{
+  "meta": {
+    "date": "2026-09-28 16:31 UTC",
+    "model_requested": "gpt-6-luna",
+    "model_served": "gpt-6-luna",
+    "library_version": "0.2.0",
+    "git_commit": "3d620c2",
+    "python": "3.14.7",
+    "platform": "Linux 6.6.87.2-microsoft-standard-WSL2 (x86_64)",
+    "pow_difficulty": 4,
+    "repeats": 2,
+    "trials": 5
+  },
+  "summary": {
+    "lookup_html": {
+      "runs": 10,
+      "finished": 10,
+      "mean_input_tokens": 6540.2,
+      "mean_output_tokens": 46.2,
+      "mean_tool_calls": 1.0,
+      "mean_seconds": 2.5,
+      "correct": 10
+    },
+    "lookup_text": {
+      "runs": 10,
+      "finished": 10,
+      "mean_input_tokens": 813.0,
+      "mean_output_tokens": 48.8,
+      "mean_tool_calls": 1.0,
+      "mean_seconds": 2.4,
+      "correct": 10
+    },
+    "lookup_wap": {
+      "runs": 10,
+      "finished": 10,
+      "mean_input_tokens": 1349.1,
+      "mean_output_tokens": 71.0,
+      "mean_tool_calls": 1.7,
+      "mean_seconds": 2.9,
+      "correct": 10
+    },
+    "reserve_approved": {
+      "runs": 5,
+      "finished": 5,
+      "mean_input_tokens": 6551.0,
+      "mean_output_tokens": 497.4,
+      "mean_tool_calls": 5.4,
+      "mean_seconds": 10.7,
+      "reserved_12_for_ada": 5,
+      "negotiated_price_applied": 5,
+      "unit_prices": [
+        4.05,
+        4.05,
+        4.05,
+        4.05,
+        4.05
+      ],
+      "all_replies_verified": true
+    },
+    "reserve_declined": {
+      "runs": 5,
+      "finished": 5,
+      "mean_input_tokens": 7029.8,
+      "mean_output_tokens": 670.8,
+      "mean_tool_calls": 5.6,
+      "mean_seconds": 12.3,
+      "asked_user": 5,
+      "server_holds_created": 0
+    },
+    "bridge_declined": {
+      "runs": 5,
+      "finished": 5,
+      "mean_input_tokens": 9578.8,
+      "mean_output_tokens": 663.4,
+      "mean_tool_calls": 5.8,
+      "mean_seconds": 14.9,
+      "asked_user": 4,
+      "server_holds_created": 0
+    },
+    "loop_firm": {
+      "runs": 5,
+      "finished": 5,
+      "mean_input_tokens": 11819.8,
+      "mean_output_tokens": 590.6,
+      "mean_tool_calls": 5.0,
+      "mean_seconds": 19.3,
+      "stopped_by_guard_on_call": [
+        null,
+        null,
+        null,
+        null,
+        6
+      ],
+      "negotiate_calls": [
+        4,
+        3,
+        3,
+        4,
+        6
+      ],
+      "server_negotiate_executions": [
+        4,
+        3,
+        3,
+        4,
+        5
+      ],
+      "model_stopped_after_guard": 1
+    },
+    "loop_adversarial": {
+      "runs": 5,
+      "finished": 5,
+      "mean_input_tokens": 7039.4,
+      "mean_output_tokens": 790.4,
+      "mean_tool_calls": 9.0,
+      "mean_seconds": 13.1,
+      "stopped_by_guard_on_call": [
+        6,
+        6,
+        6,
+        6,
+        6
+      ],
+      "negotiate_calls": [
+        11,
+        11,
+        6,
+        11,
+        6
+      ],
+      "server_negotiate_executions": [
+        5,
+        5,
+        5,
+        5,
+        5
+      ],
+      "model_stopped_after_guard": 5
+    }
+  }
+}
