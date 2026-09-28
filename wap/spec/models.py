@@ -18,7 +18,11 @@ from urllib.parse import urlsplit
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 WAP_VERSION = "1.0"
-WELL_KNOWN_PATH = "/.well-known/agent.json"
+WELL_KNOWN_PATH = "/.well-known/wap.json"
+# Also served (and tried by clients) for compatibility; other agent formats use this path too,
+# so clients must check that the document is a WAP manifest (it has ``wap_version``).
+LEGACY_WELL_KNOWN_PATH = "/.well-known/agent.json"
+WELL_KNOWN_PATHS = (WELL_KNOWN_PATH, LEGACY_WELL_KNOWN_PATH)
 INTERACT_PATH = "/wap/v1/interact"
 CHALLENGE_PATH = "/wap/v1/challenge"
 
@@ -200,7 +204,7 @@ class RateLimitPolicy(WAPModel):
 
 
 class AgentManifest(WAPModel):
-    """The document served at ``/.well-known/agent.json`` (RFC 8615)."""
+    """The document served at ``/.well-known/wap.json`` (RFC 8615)."""
 
     wap_version: Literal["1.0"] = WAP_VERSION
     domain: str = Field(description="Authority (host[:port]) the manifest is bound to.")
@@ -221,6 +225,13 @@ class AgentManifest(WAPModel):
     )
     issued_at: float = Field(default_factory=_now)
     expires_at: float | None = None
+    previous_keys: list[str] = Field(
+        default_factory=list, description="Hex keys this domain signed with before rotating to public_key."
+    )
+    key_endorsements: dict[str, str] = Field(
+        default_factory=dict,
+        description="previous key -> its signature over this manifest (excluding signature and key_endorsements).",
+    )
     signature: str = Field(default="", description="Hex Ed25519 signature over the canonical manifest.")
 
     @field_validator("domain")
@@ -264,6 +275,11 @@ class AgentManifest(WAPModel):
             raise ValueError("pow_difficulty is required when pow_required is true")
         if self.pow_required and self.challenge_url is None:
             raise ValueError("challenge_url is required when pow_required is true")
+        for key in [*self.previous_keys, *self.key_endorsements]:
+            if len(key) != 64 or not _HEX_RE.match(key):
+                raise ValueError("previous_keys / key_endorsements must use 64-char lower-case hex keys")
+        if set(self.key_endorsements) - set(self.previous_keys):
+            raise ValueError("key_endorsements may only contain keys listed in previous_keys")
         return self
 
     def get_capability(self, capability_id: str) -> Capability | None:
@@ -383,7 +399,9 @@ class StreamEventType(str, Enum):
 
 __all__ = [
     "WAP_VERSION",
+    "LEGACY_WELL_KNOWN_PATH",
     "WELL_KNOWN_PATH",
+    "WELL_KNOWN_PATHS",
     "INTERACT_PATH",
     "CHALLENGE_PATH",
     "HEADER_VERSION",

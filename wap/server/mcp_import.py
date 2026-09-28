@@ -1,7 +1,7 @@
 """Publish an existing MCP server's tools on the open web through WAP.
 
 If you already have an MCP server, one call makes its tools discoverable at
-``/.well-known/agent.json``, with signed replies, proof-of-work and rate limits::
+``/.well-known/wap.json``, with signed replies, proof-of-work and rate limits::
 
     from mcp.server.mcpserver import MCPServer
     from wap.server import WAPServer

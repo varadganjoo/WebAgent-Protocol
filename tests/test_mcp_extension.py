@@ -63,7 +63,7 @@ class TestBusinessMCPEndpoint:
         wap, app, _ = bakery
         async with running(app), mcp_http_client(app) as mcp:
             extension = mcp.server_capabilities.extensions[EXTENSION_ID]
-        assert extension["manifest_url"] == f"https://{BAKERY}/.well-known/agent.json"
+        assert extension["manifest_url"] == f"https://{BAKERY}/.well-known/wap.json"
         assert extension["public_key"] == wap.public_key
         assert extension["signed_results"] is True
         assert extension["conversation_policy"]["max_repeats"] == 3

@@ -168,6 +168,9 @@ class WAPClient:
         verify_dns: bool = False,
         block_private_networks: bool = False,
         allow_loopback: bool = False,
+        trust_on_first_use: bool = False,
+        dns_key_policy: str = "off",
+        txt_resolver: Any = None,
         validate_payloads: bool = True,
         max_pow_attempts: int = 3,
         user_agent: str | None = None,
@@ -196,6 +199,9 @@ class WAPClient:
             verify_dns=verify_dns,
             block_private_networks=block_private_networks,
             allow_loopback=allow_loopback,
+            trust_on_first_use=trust_on_first_use,
+            dns_key_policy=dns_key_policy,  # type: ignore[arg-type]
+            txt_resolver=txt_resolver,
         )
         self.auth_tokens = {normalize_authority(k): v for k, v in (auth_tokens or {}).items()}
         self.allow_insecure = allow_insecure

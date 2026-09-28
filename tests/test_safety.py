@@ -271,7 +271,7 @@ class TestDomainsAndNetworks:
         with pytest.raises(Exception, match="404"):
             await resolver.resolve("127.0.0.1:8000")  # allowed through to the (404) server
         await http.aclose()
-        assert calls == ["http://127.0.0.1:8000/.well-known/agent.json"]
+        assert calls == ["http://127.0.0.1:8000/.well-known/wap.json", "http://127.0.0.1:8000/.well-known/agent.json"]
 
     def test_bridge_defaults(self, monkeypatch: pytest.MonkeyPatch) -> None:
         for name in ("WAP_CONFIRM", "WAP_ALLOW_PRIVATE_NETWORKS", "WAP_BLOCK_LOOPBACK"):

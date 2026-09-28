@@ -22,22 +22,26 @@ import ipaddress
 import json
 import socket
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Literal
 from urllib.parse import urlsplit
 
 import httpx
 from pydantic import ValidationError
 
-from ..spec.crypto import fingerprint, verify_bytes, verify_model
+from ..spec.crypto import fingerprint, verify_bytes, verify_endorsement, verify_model
 from ..spec.models import (
     HEADER_SIGNATURE,
     WAP_VERSION,
     WELL_KNOWN_PATH,
+    WELL_KNOWN_PATHS,
     AgentManifest,
     authority_host,
     is_local_authority,
     normalize_authority,
 )
+from .dnskey import TxtResolver, check_dns_key
 from .exceptions import InsecureTransport, ManifestNotFound, VerificationFailed
 
 MAX_MANIFEST_BYTES = 1024 * 1024
@@ -55,6 +59,9 @@ class Target:
     @property
     def manifest_url(self) -> str:
         return self.base_url + WELL_KNOWN_PATH
+
+    def url_for(self, path: str) -> str:
+        return self.base_url + path
 
 
 @dataclass(frozen=True)
@@ -124,6 +131,10 @@ class ManifestResolver:
         block_private_networks: bool = False,
         allow_loopback: bool = False,
         www_fallback: bool = True,
+        trust_on_first_use: bool = False,
+        on_key_change: Callable[[str, str, str], None] | None = None,
+        dns_key_policy: Literal["off", "if-present", "require"] = "off",
+        txt_resolver: TxtResolver | None = None,
     ) -> None:
         self.http = http
         self.cache_ttl = cache_ttl
@@ -134,6 +145,12 @@ class ManifestResolver:
         # With block_private_networks, still allow 127.0.0.0/8 / ::1 (local development).
         self.allow_loopback = allow_loopback
         self.www_fallback = www_fallback
+        # With trust_on_first_use, the first verified key for a domain is pinned automatically.
+        self.trust_on_first_use = trust_on_first_use
+        # Called as on_key_change(domain, old_key, new_key) when a pinned key rotates (endorsed).
+        self.on_key_change = on_key_change
+        self.dns_key_policy = dns_key_policy
+        self.txt_resolver = txt_resolver
         self._cache: dict[str, ResolvedManifest] = {}
         self._locks: dict[str, asyncio.Lock] = {}
 
@@ -200,9 +217,23 @@ class ManifestResolver:
                     target.authority, f"resolves to non-public address(es) {blocked}; blocked by policy"
                 )
 
+    async def _fetch_paths(self, target: Target, *, expected: str) -> ResolvedManifest:
+        """Try ``/.well-known/wap.json``, then the legacy ``/.well-known/agent.json``."""
+        first_error: ManifestNotFound | None = None
+        for path in WELL_KNOWN_PATHS:
+            try:
+                return await self._fetch(target, expected=expected, path=path)
+            except ManifestNotFound as exc:
+                # Only fall back when the primary path is simply absent.
+                if exc.status_code != 404:
+                    raise
+                first_error = first_error or exc
+        assert first_error is not None
+        raise first_error
+
     async def _fetch_with_fallback(self, target: Target) -> ResolvedManifest:
         try:
-            return await self._fetch(target, expected=target.authority)
+            return await self._fetch_paths(target, expected=target.authority)
         except ManifestNotFound as first_error:
             host = authority_host(target.authority)
             is_ip = _is_ip_literal(host)
@@ -210,14 +241,14 @@ class ManifestResolver:
                 raise
             alternate = Target(authority="www." + target.authority, scheme=target.scheme)
             try:
-                return await self._fetch(alternate, expected=alternate.authority)
+                return await self._fetch_paths(alternate, expected=alternate.authority)
             except ManifestNotFound:
                 raise first_error from None
 
-    async def _fetch(self, target: Target, *, expected: str) -> ResolvedManifest:
+    async def _fetch(self, target: Target, *, expected: str, path: str = WELL_KNOWN_PATH) -> ResolvedManifest:
         if self.verify_dns:
             await self._check_dns(target)
-        url = target.manifest_url
+        url = target.url_for(path)
         try:
             async with self.http.stream(
                 "GET", url, headers={"Accept": "application/json", "X-WAP-Version": WAP_VERSION}, follow_redirects=False
@@ -252,12 +283,20 @@ class ManifestResolver:
             document = json.loads(bytes(body))
         except ValueError as exc:
             raise ManifestNotFound(target.authority, "manifest is not valid JSON", url=url) from exc
+        if not isinstance(document, dict) or "wap_version" not in document:
+            raise ManifestNotFound(
+                target.authority,
+                f"{url} is not a WAP manifest (no wap_version); it may be another agent-description format",
+                url=url,
+            )
         try:
             manifest = AgentManifest.model_validate(document)
         except ValidationError as exc:
             raise VerificationFailed(target.authority, f"manifest failed schema validation: {exc}") from exc
 
         self._verify(manifest, expected=expected)
+        if self.dns_key_policy != "off":
+            await check_dns_key(manifest, required=self.dns_key_policy == "require", txt_resolver=self.txt_resolver)
         header_ok = False
         if header_signature:
             if not verify_bytes(manifest.public_key, bytes(body), header_signature):
@@ -305,10 +344,18 @@ class ManifestResolver:
                 raise VerificationFailed(expected, f"{label} uses plain HTTP")
         pinned = self.pinned_keys.get(manifest.domain)
         if pinned is not None and pinned != manifest.public_key:
-            raise VerificationFailed(
-                expected,
-                f"public key {fingerprint(manifest.public_key)} does not match pinned key {fingerprint(pinned)}",
-            )
+            if not verify_endorsement(manifest, pinned):
+                raise VerificationFailed(
+                    expected,
+                    f"public key {fingerprint(manifest.public_key)} does not match pinned key {fingerprint(pinned)} "
+                    "and the pinned key did not endorse it",
+                )
+            # Rotation endorsed by the key we trusted: follow it.
+            self.pinned_keys[manifest.domain] = manifest.public_key
+            if self.on_key_change is not None:
+                self.on_key_change(manifest.domain, pinned, manifest.public_key)
+        elif pinned is None and self.trust_on_first_use:
+            self.pinned_keys[manifest.domain] = manifest.public_key
 
 
 __all__ = ["ManifestResolver", "ResolvedManifest", "Target", "parse_target"]

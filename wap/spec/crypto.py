@@ -1,16 +1,13 @@
 """Ed25519 signing, verification and key management for WAP.
 
-Signatures are computed over the *canonical JSON* form of a document: the
-object is serialised with sorted keys, no insignificant whitespace, UTF-8
-encoding, and the ``signature`` member removed. This makes signatures
-independent of the JSON library and key ordering used by either peer.
+Signatures are computed over the RFC 8785 (JSON Canonicalization Scheme) form
+of a document with its ``signature`` member removed (see :mod:`wap.spec.jcs`),
+so any implementation in any language reproduces the exact signed bytes.
 """
 
 from __future__ import annotations
 
 import hashlib
-import json
-import math
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,6 +18,8 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 from pydantic import BaseModel
 
+from .jcs import canonicalize
+
 SignedModelT = TypeVar("SignedModelT", bound=BaseModel)
 
 PRIVATE_KEY_ENV = "WAP_PRIVATE_KEY"
@@ -30,30 +29,11 @@ class KeyFormatError(ValueError):
     """Raised when key material is not a valid hex-encoded Ed25519 key."""
 
 
-def _normalize_floats(value: Any) -> Any:
-    """Render integral floats as ints so ``1.0`` and ``1`` canonicalise identically."""
-    if isinstance(value, float):
-        if not math.isfinite(value):
-            raise ValueError("non-finite numbers cannot be canonicalised")
-        return int(value) if value.is_integer() else value
-    if isinstance(value, dict):
-        return {k: _normalize_floats(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_normalize_floats(v) for v in value]
-    return value
-
-
 def canonical_json(obj: Any) -> bytes:
-    """Serialise ``obj`` into the canonical byte form used for signing."""
+    """Serialise ``obj`` into its RFC 8785 (JCS) canonical bytes, the form WAP signs."""
     if isinstance(obj, BaseModel):
         obj = obj.model_dump(mode="json")
-    return json.dumps(
-        _normalize_floats(obj),
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-        allow_nan=False,
-    ).encode("utf-8")
+    return canonicalize(obj)
 
 
 def signing_payload(model: BaseModel) -> bytes:
@@ -133,6 +113,19 @@ def verify_bytes(public_key: Ed25519PublicKey | str, data: bytes, signature_hex:
     return True
 
 
+def endorsement_payload(manifest: BaseModel) -> bytes:
+    """Bytes a previous key signs to endorse a rotated manifest: everything but the signatures."""
+    return canonical_json(manifest.model_dump(mode="json", exclude={"signature", "key_endorsements"}))
+
+
+def verify_endorsement(manifest: Any, previous_key: str) -> bool:
+    """True iff ``previous_key`` is listed in the manifest and endorsed it."""
+    signature = manifest.key_endorsements.get(previous_key)
+    if previous_key not in manifest.previous_keys or not signature:
+        return False
+    return verify_bytes(previous_key, endorsement_payload(manifest), signature)
+
+
 def sign_model(model: SignedModelT, private_key: Ed25519PrivateKey | str) -> SignedModelT:
     """Return a copy of ``model`` with its ``signature`` field populated."""
     if "signature" not in type(model).model_fields:
@@ -210,7 +203,9 @@ __all__ = [
     "private_key_to_hex",
     "public_key_to_hex",
     "sign_bytes",
+    "endorsement_payload",
     "sign_model",
+    "verify_endorsement",
     "signing_payload",
     "verify_bytes",
     "verify_model",

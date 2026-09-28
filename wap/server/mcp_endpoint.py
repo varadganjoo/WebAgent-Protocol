@@ -10,7 +10,7 @@ The MCP endpoint keeps WAP's guarantees where MCP has room for them:
 
 * every successful ``tools/call`` result carries the business's Ed25519-signed
   reply in ``_meta["io.webagent/signed_reply"]``, verifiable against the key in
-  ``/.well-known/agent.json``;
+  ``/.well-known/wap.json``;
 * calls are rate-limited per client IP with the server's policy;
 * proof-of-work can be required (``mcp_require_pow``): the client passes
   ``_meta["io.webagent/pow"] = {"seed", "nonce"}`` and a failed call returns a

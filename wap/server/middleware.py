@@ -5,7 +5,7 @@
   WAP response with ``X-WAP-Version``.
 * :class:`WAPDiscoveryMiddleware` is a dependency-light pure ASGI middleware
   for *any* ASGI framework (Starlette, Django, Quart, Litestar...). It serves
-  ``/.well-known/agent.json`` in front of the wrapped application, so a site
+  ``/.well-known/wap.json`` (and the legacy ``/.well-known/agent.json``) in front of the wrapped application, so a site
   can publish its manifest without routing changes.
 """
 
@@ -14,7 +14,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from ..spec.crypto import canonical_json
-from ..spec.models import HEADER_SIGNATURE, HEADER_VERSION, WAP_VERSION, WELL_KNOWN_PATH, ErrorResponse
+from ..spec.models import HEADER_SIGNATURE, HEADER_VERSION, WAP_VERSION, WELL_KNOWN_PATHS, ErrorResponse
 from .app import WAPProtocolError
 
 if TYPE_CHECKING:
@@ -27,14 +27,14 @@ ASGIApp = Any
 
 
 class WAPDiscoveryMiddleware:
-    """Serve the signed manifest at ``/.well-known/agent.json`` in front of any ASGI app."""
+    """Serve the signed manifest at the well-known paths in front of any ASGI app."""
 
     def __init__(self, app: ASGIApp, server: WAPServer) -> None:
         self.app = app
         self.server = server
 
     async def __call__(self, scope: Scope, receive: Any, send: Any) -> None:
-        if scope["type"] == "http" and scope.get("path") == WELL_KNOWN_PATH:
+        if scope["type"] == "http" and scope.get("path") in WELL_KNOWN_PATHS:
             method = scope.get("method", "GET")
             if method in ("GET", "HEAD"):
                 await self._serve_manifest(scope, send, head=method == "HEAD")

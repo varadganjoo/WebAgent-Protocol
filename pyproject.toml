@@ -63,8 +63,12 @@ mcp = [
 redis = [
     "redis>=5",
 ]
+# Optional DNS anchoring of domain keys (_wap.<domain> TXT records).
+dns = [
+    "dnspython>=2.6",
+]
 all = [
-    "webagent-protocol[server,mcp,redis]",
+    "webagent-protocol[server,mcp,redis,dns]",
 ]
 dev = [
     "webagent-protocol[server,mcp,redis]",

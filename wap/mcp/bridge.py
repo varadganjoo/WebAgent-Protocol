@@ -96,7 +96,7 @@ logger = logging.getLogger("wap.mcp")
 SERVER_NAME = "webagent-protocol"
 INSTRUCTIONS = (
     "Tools for the WebAgent Protocol (WAP), an MCP extension for the open web. Businesses publish a "
-    "signed manifest at https://<domain>/.well-known/agent.json describing their agent's capabilities. "
+    "signed manifest at https://<domain>/.well-known/wap.json describing their agent's capabilities. "
     "Call wap_discover(domain) to verify a site: its capabilities are then added to your tool list as "
     "'<site>__<capability>' tools with their own input schemas. You can also use wap_interact or "
     "wap_ask directly. Actions that change something or spend money are confirmed with the user before "

@@ -39,7 +39,7 @@ from ..spec.conversation import (
     reply_fingerprint,
     request_fingerprint,
 )
-from ..spec.crypto import Signer
+from ..spec.crypto import Signer, endorsement_payload
 from ..spec.models import (
     CHALLENGE_PATH,
     EFFECT_RANK,
@@ -600,6 +600,7 @@ class WAPServer:
         private_key: str | None = None,
         require_pow: bool = False,
         *,
+        previous_keys: list[str] | None = None,
         description: str = "",
         store: StateStore | None = None,
         pow_difficulty: int = 4,
@@ -632,6 +633,9 @@ class WAPServer:
                 name,
             )
         self.signer = Signer(private_key)
+        # Keys this domain rotated away from; each endorses the new manifest so that clients
+        # which pinned an old key can follow the rotation. Remove them once clients have migrated.
+        self.previous_signers = [Signer(k) for k in (previous_keys or [])]
         self.store: StateStore = store or MemoryStore()
         self.require_pow = require_pow
         # Derived from the signing key unless given, so every worker sharing the key
@@ -792,7 +796,13 @@ class WAPServer:
             conversation_policy=self.conversation_policy.as_dict() if self.conversation_policy else None,
             issued_at=now,
             expires_at=now + self.manifest_ttl_seconds,
+            previous_keys=[s.public_key for s in self.previous_signers],
         )
+        if self.previous_signers:
+            payload = endorsement_payload(manifest)
+            manifest = manifest.model_copy(
+                update={"key_endorsements": {s.public_key: s.sign(payload) for s in self.previous_signers}}
+            )
         return self.signer.sign_model(manifest)
 
     def manifest(self) -> AgentManifest:

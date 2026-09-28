@@ -29,6 +29,7 @@ from rich.text import Text
 
 from .. import __version__
 from ..client import WAPClient, WAPError
+from ..client.dnskey import txt_record_for
 from ..client.exceptions import ProtocolError, SchemaValidationError
 from ..spec.crypto import fingerprint, generate_keypair
 from ..spec.models import AgentManifest, StreamEventType
@@ -296,7 +297,11 @@ def keygen(
         out.write_text(pair.private_key + "\n", encoding="utf-8")
         out.chmod(stat.S_IRUSR | stat.S_IWUSR)
     if as_json:
-        document = {"public_key": pair.public_key, "fingerprint": pair.fingerprint}
+        document = {
+            "public_key": pair.public_key,
+            "fingerprint": pair.fingerprint,
+            "dns_txt_record": txt_record_for(pair.public_key),
+        }
         if out is None:
             document["private_key"] = pair.private_key
         else:
@@ -312,6 +317,7 @@ def keygen(
         table.add_row("Private key", f"written to {out}")
     table.add_row("Public key", pair.public_key)
     table.add_row("Fingerprint", pair.fingerprint)
+    table.add_row("DNS TXT (optional)", f'_wap.<your-domain>  TXT  "{txt_record_for(pair.public_key)}"')
     console.print(Panel(table, title="Ed25519 key pair", border_style="green"))
     console.print("[dim]Keep the private key secret. Provide it via WAP_PRIVATE_KEY or WAPServer(private_key=...).")
 

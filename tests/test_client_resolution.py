@@ -78,7 +78,8 @@ def resolver_for(recorder: Recorder, **kwargs) -> ManifestResolver:
     return ManifestResolver(httpx.AsyncClient(transport=httpx.MockTransport(recorder)), **kwargs)
 
 
-URL = f"https://{DOMAIN}/.well-known/agent.json"
+URL = f"https://{DOMAIN}/.well-known/wap.json"
+LEGACY_URL = f"https://{DOMAIN}/.well-known/agent.json"
 
 
 class TestParseTarget:
@@ -97,7 +98,7 @@ class TestParseTarget:
     def test_targets(self, target: str, authority: str, scheme: str) -> None:
         parsed = parse_target(target)
         assert (parsed.authority, parsed.scheme) == (authority, scheme)
-        assert parsed.manifest_url == f"{scheme}://{authority}/.well-known/agent.json"
+        assert parsed.manifest_url == f"{scheme}://{authority}/.well-known/wap.json"
 
     def test_insecure_http_refused(self) -> None:
         with pytest.raises(InsecureTransport):
@@ -154,14 +155,28 @@ class TestResolver:
     async def test_www_fallback(self) -> None:
         signer = Signer()
         www = signed_manifest(signer, domain=f"www.{DOMAIN}", interaction_url=f"https://www.{DOMAIN}/wap/v1/interact")
-        recorder = Recorder({f"https://www.{DOMAIN}/.well-known/agent.json": serve_manifest(www, signer)})
+        recorder = Recorder({f"https://www.{DOMAIN}/.well-known/wap.json": serve_manifest(www, signer)})
         manifest = await resolver_for(recorder).resolve(DOMAIN)
         assert manifest.domain == f"www.{DOMAIN}"
-        assert recorder.calls == [URL, f"https://www.{DOMAIN}/.well-known/agent.json"]
+        assert recorder.calls == [URL, LEGACY_URL, f"https://www.{DOMAIN}/.well-known/wap.json"]
 
-        no_fallback = Recorder({f"https://www.{DOMAIN}/.well-known/agent.json": serve_manifest(www, signer)})
+        no_fallback = Recorder({f"https://www.{DOMAIN}/.well-known/wap.json": serve_manifest(www, signer)})
         with pytest.raises(ManifestNotFound):
             await resolver_for(no_fallback, www_fallback=False).resolve(DOMAIN)
+
+    async def test_legacy_path_fallback(self) -> None:
+        signer = Signer()
+        recorder = Recorder({LEGACY_URL: serve_manifest(signed_manifest(signer), signer)})
+        manifest = await resolver_for(recorder, www_fallback=False).resolve(DOMAIN)
+        assert manifest.public_key == signer.public_key
+        assert recorder.calls == [URL, LEGACY_URL]
+
+    async def test_non_wap_document_at_legacy_path(self) -> None:
+        """Other agent formats (e.g. an A2A agent card) may live at /.well-known/agent.json."""
+        card = {"name": "Other Agent", "url": "https://shop.example/a2a", "skills": []}
+        recorder = Recorder({LEGACY_URL: lambda r: httpx.Response(200, json=card)})
+        with pytest.raises(ManifestNotFound, match="not a WAP manifest"):
+            await resolver_for(recorder, www_fallback=False).resolve(DOMAIN)
 
     async def test_redirects_are_not_followed(self) -> None:
         recorder = Recorder({URL: lambda r: httpx.Response(302, headers={"Location": "https://evil.example/x"})})
@@ -251,7 +266,7 @@ class TestResolver:
     async def test_private_network_blocking(self) -> None:
         signer = Signer()
         recorder = Recorder(
-            {"http://127.0.0.1:9/.well-known/agent.json": serve_manifest(signed_manifest(signer), signer)}
+            {"http://127.0.0.1:9/.well-known/wap.json": serve_manifest(signed_manifest(signer), signer)}
         )
         with pytest.raises(VerificationFailed, match="non-public"):
             await resolver_for(recorder, block_private_networks=True).resolve("127.0.0.1:9")

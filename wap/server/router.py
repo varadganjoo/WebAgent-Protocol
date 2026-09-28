@@ -1,4 +1,4 @@
-"""HTTP endpoints for WAP/1.0: ``/.well-known/agent.json``, ``/wap/v1/challenge`` and ``/wap/v1/interact``.
+"""HTTP endpoints for WAP/1.0: ``/.well-known/wap.json``, ``/wap/v1/challenge`` and ``/wap/v1/interact``.
 
 The interaction endpoint enforces the request pipeline defined in
 ``docs/spec_rfc.md`` Section 7.2, in this order:
@@ -37,6 +37,7 @@ from ..spec.models import (
     HEADER_SIGNATURE,
     HEADER_VERSION,
     INTERACT_PATH,
+    LEGACY_WELL_KNOWN_PATH,
     WAP_VERSION,
     WELL_KNOWN_PATH,
     AgentMessage,
@@ -189,6 +190,7 @@ def build_router(server: WAPServer) -> APIRouter:
     router = APIRouter(tags=["WebAgent Protocol"])
 
     @router.get(WELL_KNOWN_PATH, include_in_schema=True, summary="WAP discovery manifest (RFC 8615)")
+    @router.get(LEGACY_WELL_KNOWN_PATH, include_in_schema=False)
     async def well_known_agent(request: Request) -> Response:
         try:
             headers = await server.limit_ip(client_ip(request, server.trust_forwarded_for))

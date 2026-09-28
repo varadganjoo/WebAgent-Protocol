@@ -63,7 +63,9 @@ async def http(shop: WAPServer) -> AsyncIterator[httpx.AsyncClient]:
 
 class TestDiscovery:
     async def test_well_known_manifest(self, shop: WAPServer, http: httpx.AsyncClient) -> None:
-        response = await http.get("/.well-known/agent.json")
+        response = await http.get("/.well-known/wap.json")
+        legacy = await http.get("/.well-known/agent.json")
+        assert legacy.status_code == 200 and legacy.json() == response.json()
         assert response.status_code == 200
         assert response.headers["x-wap-version"] == "1.0"
         assert response.headers["access-control-allow-origin"] == "*"
@@ -140,7 +142,7 @@ class TestDiscovery:
         shop.mount(app)
         assert app.state.wap_server is shop
         paths = app.openapi()["paths"]
-        assert {"/.well-known/agent.json", "/wap/v1/interact", "/wap/v1/challenge"} <= set(paths)
+        assert {"/.well-known/wap.json", "/wap/v1/interact", "/wap/v1/challenge"} <= set(paths)
         with pytest.raises(RuntimeError):
             make_server().mount(app)
 

@@ -1,0 +1,257 @@
+{
+  "description": "WebAgent Protocol 1.0 test vectors. Canonical form is RFC 8785 (JCS); signatures are pure Ed25519 (RFC 8032) over the UTF-8 canonical bytes of the document without its 'signature' member; keys and signatures are lower-case hex.",
+  "keys": {
+    "domain": {
+      "private_key": "22230d9a1b6ad77e18c49b2da993732dd99a244d465cfe48a598205f8adba80e",
+      "public_key": "badd3e739492f27a4897b5463a514926a5b7d19ab76238b92c6640f36b15b25f"
+    },
+    "previous_domain_key": {
+      "private_key": "58b1e2b6256627bd488c55b15abb4eeb014c4565306b88ee4fe3e016a3b4974d",
+      "public_key": "1758686eac7bbd983005c73225f16c34f0e5b76d30a2178d6913c19649f4ca66"
+    },
+    "agent": {
+      "private_key": "4a0bd14081276eff5968f3c50e6391be92672ace12a768a0d7defa63405a7d86",
+      "public_key": "42ee9257beafeb48e76d8750d8f708448d970d0459705f1c81e80ed8db537742"
+    }
+  },
+  "jcs": [
+    {
+      "input": {
+        "b": 2,
+        "a": 1,
+        "c": {
+          "z": [
+            3,
+            2,
+            1
+          ],
+          "y": null,
+          "x": true
+        }
+      },
+      "canonical": "{\"a\":1,\"b\":2,\"c\":{\"x\":true,\"y\":null,\"z\":[3,2,1]}}"
+    },
+    {
+      "input": {
+        "numbers": [
+          0,
+          -0.0,
+          1.0,
+          4.5,
+          0.002,
+          1e-07,
+          1e-06,
+          1e+21,
+          1e+20,
+          333333333.3333333,
+          5e-324,
+          -1.5e+300
+        ]
+      },
+      "canonical": "{\"numbers\":[0,0,1,4.5,0.002,1e-7,0.000001,1e+21,100000000000000000000,333333333.3333333,5e-324,-1.5e+300]}"
+    },
+    {
+      "input": {
+        "strings": [
+          "é",
+          "€",
+          "😀",
+          " ",
+          "tab\there",
+          "quote\"back\\slash",
+          "\u0001\u001f"
+        ]
+      },
+      "canonical": "{\"strings\":[\"é\",\"€\",\"😀\",\" \",\"tab\\there\",\"quote\\\"back\\\\slash\",\"\\u0001\\u001f\"]}"
+    },
+    {
+      "input": {
+        "": 1,
+        "😀": 2,
+        "a": 3,
+        "é": 4,
+        "A": 5
+      },
+      "canonical": "{\"A\":5,\"a\":3,\"é\":4,\"😀\":2,\"\":1}"
+    },
+    {
+      "input": [
+        1,
+        "two",
+        [
+          3,
+          {
+            "four": 4
+          }
+        ],
+        null,
+        false
+      ],
+      "canonical": "[1,\"two\",[3,{\"four\":4}],null,false]"
+    }
+  ],
+  "manifest": {
+    "document": {
+      "wap_version": "1.0",
+      "domain": "bakery.example",
+      "name": "Golden Crust Bakery",
+      "description": "Test-vector manifest.",
+      "public_key": "badd3e739492f27a4897b5463a514926a5b7d19ab76238b92c6640f36b15b25f",
+      "interaction_url": "https://bakery.example/wap/v1/interact",
+      "challenge_url": "https://bakery.example/wap/v1/challenge",
+      "mcp_url": "https://bakery.example/mcp",
+      "capabilities": [
+        {
+          "id": "check_pastry_stock",
+          "name": "Check Pastry Stock",
+          "description": "Units available right now.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "item": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "item"
+            ]
+          },
+          "output_schema": null,
+          "requires_auth": false,
+          "effects": "read",
+          "streaming": false
+        }
+      ],
+      "pow_required": true,
+      "pow_difficulty": 4,
+      "rate_limit_policy": {
+        "requests_per_minute": 120,
+        "burst": 30,
+        "scopes": [
+          "ip",
+          "agent_key"
+        ]
+      },
+      "conversation_policy": null,
+      "issued_at": 1790000000.5,
+      "expires_at": 1790003600.5,
+      "previous_keys": [],
+      "key_endorsements": {},
+      "signature": "fbc22dc7e9503ad3a322bcb9e5a46bc44705e5eec49622da98692464d9b9aeef892fcc4824d145ed69324181f681a8ee194db7983187851b97763ce9c9047e0a"
+    },
+    "signing_payload": "{\"capabilities\":[{\"description\":\"Units available right now.\",\"effects\":\"read\",\"id\":\"check_pastry_stock\",\"input_schema\":{\"properties\":{\"item\":{\"type\":\"string\"}},\"required\":[\"item\"],\"type\":\"object\"},\"name\":\"Check Pastry Stock\",\"output_schema\":null,\"requires_auth\":false,\"streaming\":false}],\"challenge_url\":\"https://bakery.example/wap/v1/challenge\",\"conversation_policy\":null,\"description\":\"Test-vector manifest.\",\"domain\":\"bakery.example\",\"expires_at\":1790003600.5,\"interaction_url\":\"https://bakery.example/wap/v1/interact\",\"issued_at\":1790000000.5,\"key_endorsements\":{},\"mcp_url\":\"https://bakery.example/mcp\",\"name\":\"Golden Crust Bakery\",\"pow_difficulty\":4,\"pow_required\":true,\"previous_keys\":[],\"public_key\":\"badd3e739492f27a4897b5463a514926a5b7d19ab76238b92c6640f36b15b25f\",\"rate_limit_policy\":{\"burst\":30,\"requests_per_minute\":120,\"scopes\":[\"ip\",\"agent_key\"]},\"wap_version\":\"1.0\"}",
+    "signature": "fbc22dc7e9503ad3a322bcb9e5a46bc44705e5eec49622da98692464d9b9aeef892fcc4824d145ed69324181f681a8ee194db7983187851b97763ce9c9047e0a"
+  },
+  "rotated_manifest": {
+    "document": {
+      "wap_version": "1.0",
+      "domain": "bakery.example",
+      "name": "Golden Crust Bakery",
+      "description": "Test-vector manifest.",
+      "public_key": "badd3e739492f27a4897b5463a514926a5b7d19ab76238b92c6640f36b15b25f",
+      "interaction_url": "https://bakery.example/wap/v1/interact",
+      "challenge_url": "https://bakery.example/wap/v1/challenge",
+      "mcp_url": "https://bakery.example/mcp",
+      "capabilities": [
+        {
+          "id": "check_pastry_stock",
+          "name": "Check Pastry Stock",
+          "description": "Units available right now.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "item": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "item"
+            ]
+          },
+          "output_schema": null,
+          "requires_auth": false,
+          "effects": "read",
+          "streaming": false
+        }
+      ],
+      "pow_required": true,
+      "pow_difficulty": 4,
+      "rate_limit_policy": {
+        "requests_per_minute": 120,
+        "burst": 30,
+        "scopes": [
+          "ip",
+          "agent_key"
+        ]
+      },
+      "conversation_policy": null,
+      "issued_at": 1790000000.5,
+      "expires_at": 1790003600.5,
+      "previous_keys": [
+        "1758686eac7bbd983005c73225f16c34f0e5b76d30a2178d6913c19649f4ca66"
+      ],
+      "key_endorsements": {
+        "1758686eac7bbd983005c73225f16c34f0e5b76d30a2178d6913c19649f4ca66": "bb59f671dc8f83eb854e813d61e71831a716011f9a8864904d2518dbded62cb93cbcb5f21a123e8df1508ded861da61fad1b98cf182700c16c7ea5ed933af30c"
+      },
+      "signature": "539dd1a9da602e15f0aae412242a0e6a0d24994e64a18bc509dcef26bb5d7c3d2adf7ad5d53e961cae6273e9040dd601a46fa27063030b07947d2fefbb465b04"
+    },
+    "signing_payload": "{\"capabilities\":[{\"description\":\"Units available right now.\",\"effects\":\"read\",\"id\":\"check_pastry_stock\",\"input_schema\":{\"properties\":{\"item\":{\"type\":\"string\"}},\"required\":[\"item\"],\"type\":\"object\"},\"name\":\"Check Pastry Stock\",\"output_schema\":null,\"requires_auth\":false,\"streaming\":false}],\"challenge_url\":\"https://bakery.example/wap/v1/challenge\",\"conversation_policy\":null,\"description\":\"Test-vector manifest.\",\"domain\":\"bakery.example\",\"expires_at\":1790003600.5,\"interaction_url\":\"https://bakery.example/wap/v1/interact\",\"issued_at\":1790000000.5,\"key_endorsements\":{\"1758686eac7bbd983005c73225f16c34f0e5b76d30a2178d6913c19649f4ca66\":\"bb59f671dc8f83eb854e813d61e71831a716011f9a8864904d2518dbded62cb93cbcb5f21a123e8df1508ded861da61fad1b98cf182700c16c7ea5ed933af30c\"},\"mcp_url\":\"https://bakery.example/mcp\",\"name\":\"Golden Crust Bakery\",\"pow_difficulty\":4,\"pow_required\":true,\"previous_keys\":[\"1758686eac7bbd983005c73225f16c34f0e5b76d30a2178d6913c19649f4ca66\"],\"public_key\":\"badd3e739492f27a4897b5463a514926a5b7d19ab76238b92c6640f36b15b25f\",\"rate_limit_policy\":{\"burst\":30,\"requests_per_minute\":120,\"scopes\":[\"ip\",\"agent_key\"]},\"wap_version\":\"1.0\"}",
+    "signature": "539dd1a9da602e15f0aae412242a0e6a0d24994e64a18bc509dcef26bb5d7c3d2adf7ad5d53e961cae6273e9040dd601a46fa27063030b07947d2fefbb465b04",
+    "endorsement_payload": "{\"capabilities\":[{\"description\":\"Units available right now.\",\"effects\":\"read\",\"id\":\"check_pastry_stock\",\"input_schema\":{\"properties\":{\"item\":{\"type\":\"string\"}},\"required\":[\"item\"],\"type\":\"object\"},\"name\":\"Check Pastry Stock\",\"output_schema\":null,\"requires_auth\":false,\"streaming\":false}],\"challenge_url\":\"https://bakery.example/wap/v1/challenge\",\"conversation_policy\":null,\"description\":\"Test-vector manifest.\",\"domain\":\"bakery.example\",\"expires_at\":1790003600.5,\"interaction_url\":\"https://bakery.example/wap/v1/interact\",\"issued_at\":1790000000.5,\"mcp_url\":\"https://bakery.example/mcp\",\"name\":\"Golden Crust Bakery\",\"pow_difficulty\":4,\"pow_required\":true,\"previous_keys\":[\"1758686eac7bbd983005c73225f16c34f0e5b76d30a2178d6913c19649f4ca66\"],\"public_key\":\"badd3e739492f27a4897b5463a514926a5b7d19ab76238b92c6640f36b15b25f\",\"rate_limit_policy\":{\"burst\":30,\"requests_per_minute\":120,\"scopes\":[\"ip\",\"agent_key\"]},\"wap_version\":\"1.0\"}"
+  },
+  "request": {
+    "document": {
+      "wap_version": "1.0",
+      "message_id": "0123456789abcdef0123456789abcdef",
+      "session_id": "test-vector-session",
+      "role": "user_agent",
+      "content": "",
+      "capability_id": "check_pastry_stock",
+      "structured_data": {
+        "item": "Sourdough Croissant"
+      },
+      "in_reply_to": null,
+      "max_effects": null,
+      "idempotency_key": null,
+      "timestamp": 1790000100.25,
+      "pow_seed": null,
+      "pow_nonce": null,
+      "public_key": "42ee9257beafeb48e76d8750d8f708448d970d0459705f1c81e80ed8db537742",
+      "signature": "bc68cb542a9362a50882d98e0385dec6d07442918fc8fc5b2d47d7c245418b8717cdc5ebdf0d49f2014c2359dadcb14b8500e82c9c0310f1ee7c489a71b36300"
+    },
+    "signing_payload": "{\"capability_id\":\"check_pastry_stock\",\"content\":\"\",\"idempotency_key\":null,\"in_reply_to\":null,\"max_effects\":null,\"message_id\":\"0123456789abcdef0123456789abcdef\",\"pow_nonce\":null,\"pow_seed\":null,\"public_key\":\"42ee9257beafeb48e76d8750d8f708448d970d0459705f1c81e80ed8db537742\",\"role\":\"user_agent\",\"session_id\":\"test-vector-session\",\"structured_data\":{\"item\":\"Sourdough Croissant\"},\"timestamp\":1790000100.25,\"wap_version\":\"1.0\"}",
+    "signature": "bc68cb542a9362a50882d98e0385dec6d07442918fc8fc5b2d47d7c245418b8717cdc5ebdf0d49f2014c2359dadcb14b8500e82c9c0310f1ee7c489a71b36300"
+  },
+  "reply": {
+    "document": {
+      "wap_version": "1.0",
+      "message_id": "fedcba9876543210fedcba9876543210",
+      "session_id": "test-vector-session",
+      "role": "business_agent",
+      "content": "Yes! 24 x Sourdough Croissant available at $4.50 each.",
+      "capability_id": "check_pastry_stock",
+      "structured_data": {
+        "item": "Sourdough Croissant",
+        "available": 24,
+        "unit_price": 4.5
+      },
+      "in_reply_to": "0123456789abcdef0123456789abcdef",
+      "max_effects": null,
+      "idempotency_key": null,
+      "timestamp": 1790000100.75,
+      "pow_seed": null,
+      "pow_nonce": null,
+      "public_key": "badd3e739492f27a4897b5463a514926a5b7d19ab76238b92c6640f36b15b25f",
+      "signature": "132a9a9f47420eaab823c2010c0e71c6dd30c3a46124b36d179d957ddd0cd5459d658ed30c0a2253b14c805735536e70aa96e40c640d196ebbcc7c44e6904a04"
+    },
+    "signing_payload": "{\"capability_id\":\"check_pastry_stock\",\"content\":\"Yes! 24 x Sourdough Croissant available at $4.50 each.\",\"idempotency_key\":null,\"in_reply_to\":\"0123456789abcdef0123456789abcdef\",\"max_effects\":null,\"message_id\":\"fedcba9876543210fedcba9876543210\",\"pow_nonce\":null,\"pow_seed\":null,\"public_key\":\"badd3e739492f27a4897b5463a514926a5b7d19ab76238b92c6640f36b15b25f\",\"role\":\"business_agent\",\"session_id\":\"test-vector-session\",\"structured_data\":{\"available\":24,\"item\":\"Sourdough Croissant\",\"unit_price\":4.5},\"timestamp\":1790000100.75,\"wap_version\":\"1.0\"}",
+    "signature": "132a9a9f47420eaab823c2010c0e71c6dd30c3a46124b36d179d957ddd0cd5459d658ed30c0a2253b14c805735536e70aa96e40c640d196ebbcc7c44e6904a04"
+  },
+  "proof_of_work": {
+    "algorithm": "sha256-leading-zero-hex",
+    "seed": "3bc095ef135eb4fd9baf79412040b90c047d8be551cf82ccaf6c4fe51dcb0ffe3bc095ef135eb4fd9baf79412040b90c047d8be551cf82ccaf6c4fe51dcb0ffe0000000000000000",
+    "difficulty": 4,
+    "nonce": "247e5",
+    "digest": "000009bd4e717b0e3b51ed3f555473a3f08782029fc97d4f2b33a2123bb46772"
+  }
+}
