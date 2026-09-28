@@ -7,11 +7,11 @@ The core package ships the specification models and the async consumer SDK::
     async with WAPClient() as client:
         result = await client.ask("bakery.example", "Do you have sourdough croissants?")
 
-The provider SDK lives in :mod:`wap.server` (``pip install "wap[server]"``) and
-the Model Context Protocol bridge in :mod:`wap.mcp` (``pip install "wap[mcp]"``).
+The provider SDK lives in :mod:`wap.server` (``pip install "webagent-protocol[server]"``) and
+the Model Context Protocol bridge in :mod:`wap.mcp` (``pip install "webagent-protocol[mcp]"``).
 """
 
-__version__ = "1.0.0"
+__version__ = "0.1.0"
 
 from .client import (
     InteractionResult,
@@ -22,6 +22,9 @@ from .client import (
 )
 from .client.exceptions import (
     CapabilityNotFound,
+    ConversationLimitReached,
+    ConversationStopped,
+    LoopDetected,
     ManifestNotFound,
     ProtocolError,
     RateLimited,
@@ -37,6 +40,7 @@ from .spec import (
     Signer,
     generate_keypair,
 )
+from .spec.conversation import ConversationPolicy
 
 __all__ = [
     "__version__",
@@ -46,7 +50,11 @@ __all__ = [
     "Capability",
     "CapabilityNotFound",
     "Challenge",
+    "ConversationLimitReached",
+    "ConversationPolicy",
+    "ConversationStopped",
     "InteractionResult",
+    "LoopDetected",
     "ManifestNotFound",
     "ManifestResolver",
     "ProtocolError",

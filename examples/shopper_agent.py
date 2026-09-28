@@ -34,7 +34,10 @@ async def run(domain: str) -> str:
         # 1. Discovery: GET /.well-known/agent.json, verify Ed25519 signature and domain binding.
         manifest = await client.discover(domain)
         console.rule(f"[bold]{manifest.name}")
-        console.print(f"verified manifest for [cyan]{manifest.domain}[/] · key {fingerprint(manifest.public_key)}")
+        console.print(
+            f"verified manifest for [cyan]{manifest.domain}[/] · key [green]{fingerprint(manifest.public_key)}[/]",
+            highlight=False,
+        )
         console.print(
             f"proof-of-work: {'difficulty ' + str(manifest.pow_difficulty) if manifest.pow_required else 'off'} · "
             f"capabilities: {', '.join(c.id for c in manifest.capabilities)}"

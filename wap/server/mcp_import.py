@@ -17,7 +17,7 @@ If you already have an MCP server, one call makes its tools discoverable at
 
 ``source`` is anything the MCP SDK's ``Client`` accepts: an in-process server
 object, a streamable-HTTP URL, or ``StdioServerParameters`` for a subprocess.
-Requires the ``mcp`` extra.
+Installed with the ``server`` extra.
 """
 
 from __future__ import annotations

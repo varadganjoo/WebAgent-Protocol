@@ -328,7 +328,7 @@ def serve(
     try:
         import uvicorn
     except ImportError as exc:
-        err_console.print('[red]uvicorn is not installed. Run: pip install "wap[server]"')
+        err_console.print('[red]uvicorn is not installed. Run: pip install "webagent-protocol[server]"')
         raise typer.Exit(code=1) from exc
     sys.path.insert(0, str(app_dir.resolve()))
     uvicorn.run(target, host=host, port=port, reload=reload, app_dir=str(app_dir.resolve()))

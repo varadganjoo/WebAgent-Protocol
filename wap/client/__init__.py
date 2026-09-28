@@ -3,7 +3,10 @@
 from .exceptions import (
     AuthRequired,
     CapabilityNotFound,
+    ConversationLimitReached,
+    ConversationStopped,
     InsecureTransport,
+    LoopDetected,
     ManifestNotFound,
     ProofOfWorkFailed,
     ProtocolError,
@@ -18,7 +21,10 @@ from .session import InteractionResult, StreamEvent, WAPClient, WAPSession, vali
 __all__ = [
     "AuthRequired",
     "CapabilityNotFound",
+    "ConversationLimitReached",
+    "ConversationStopped",
     "InsecureTransport",
+    "LoopDetected",
     "InteractionResult",
     "ManifestNotFound",
     "ManifestResolver",

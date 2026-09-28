@@ -21,7 +21,7 @@ from tests.conftest import client_for
 from wap.client import ProtocolError
 from wap.mcp.bridge import BUILTIN_TOOLS, WAPBridge, build_server, main, preload, site_slug
 from wap.server import WAPServer
-from wap.server.mcp_endpoint import META_CHALLENGE, META_POW, META_SESSION_ID, META_SIGNED_REPLY
+from wap.server.mcp_endpoint import EXTENSION_ID, META_CHALLENGE, META_POW, META_SESSION_ID, META_SIGNED_REPLY
 from wap.server.mcp_import import capability_id_for
 from wap.spec.crypto import verify_model
 from wap.spec.models import AgentManifest, AgentMessage, RateLimitPolicy
@@ -59,6 +59,15 @@ class TestBusinessMCPEndpoint:
         async with client_for(app) as client:
             assert (await client.discover(BAKERY)).mcp_url == manifest.mcp_url
 
+    async def test_declares_wap_extension(self, bakery) -> None:
+        wap, app, _ = bakery
+        async with running(app), mcp_http_client(app) as mcp:
+            extension = mcp.server_capabilities.extensions[EXTENSION_ID]
+        assert extension["manifest_url"] == f"https://{BAKERY}/.well-known/agent.json"
+        assert extension["public_key"] == wap.public_key
+        assert extension["signed_results"] is True
+        assert extension["conversation_policy"]["max_repeats"] == 3
+
     async def test_tools_mirror_capabilities(self, bakery) -> None:
         wap, app, _ = bakery
         async with running(app), mcp_http_client(app) as mcp:
@@ -69,8 +78,8 @@ class TestBusinessMCPEndpoint:
             assert tools[cap.id].description == cap.description
         assert tools["check_pastry_stock"].output_schema["properties"]["available"]["type"] == "integer"
 
-    async def test_proof_of_work_over_mcp_and_signed_results(self, bakery) -> None:
-        wap, app, _ = bakery
+    async def test_proof_of_work_over_mcp_and_signed_results(self, keypair) -> None:
+        wap, app, _ = create_bakery(BAKERY, private_key=keypair.private_key, pow_difficulty=2, mcp_require_pow=None)
         async with running(app), mcp_http_client(app) as mcp:
             refused = await mcp.call_tool("check_pastry_stock", {"item": ITEM})
             assert refused.is_error and "pow_required" in refused.content[0].text
@@ -87,7 +96,7 @@ class TestBusinessMCPEndpoint:
 
     async def test_plain_mcp_clients_when_pow_disabled_for_mcp(self, keypair) -> None:
         wap, app, _ = create_bakery(BAKERY, private_key=keypair.private_key, pow_difficulty=2)
-        wap.mcp_require_pow = False
+        assert wap.mcp_require_pow is False
         async with running(app), mcp_http_client(app) as mcp:
             result = await mcp.call_tool("get_menu", {})
             bad = await mcp.call_tool("check_pastry_stock", {"flavour": "x"})

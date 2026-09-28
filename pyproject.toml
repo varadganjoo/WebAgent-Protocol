@@ -3,25 +3,38 @@ requires = ["hatchling>=1.21"]
 build-backend = "hatchling.build"
 
 [project]
-name = "wap"
+name = "webagent-protocol"
 dynamic = ["version"]
-description = "WebAgent Protocol (WAP): well-known discovery, signed negotiation and abuse-resistant transport between AI agents on the open web."
+description = "WebAgent Protocol: an MCP extension that lets AI agents discover, verify and safely use tools published by any website."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
-authors = [{ name = "WebAgent Protocol contributors" }]
-keywords = ["ai-agents", "protocol", "mcp", "well-known", "ed25519", "proof-of-work", "sse", "fastapi"]
+license-files = ["LICENSE"]
+authors = [{ name = "Varad Ganjoo" }]
+keywords = [
+    "mcp",
+    "model-context-protocol",
+    "ai-agents",
+    "agentic-web",
+    "well-known",
+    "ed25519",
+    "proof-of-work",
+    "fastapi",
+]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Framework :: AsyncIO",
     "Framework :: FastAPI",
     "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Internet :: WWW/HTTP",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Security :: Cryptography",
     "Typing :: Typed",
 ]
 dependencies = [
@@ -35,21 +48,26 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Business side: WAP endpoints + the same tools as a standard MCP endpoint at /mcp.
 server = [
     "fastapi>=0.110",
     "uvicorn[standard]>=0.29",
     "sse-starlette>=2.0",
+    "mcp>=2,<3",
 ]
+# User side: the wap-mcp bridge for Claude, Cursor, Codex and other MCP hosts.
 mcp = [
-    "mcp>=1.2",
+    "mcp>=2,<3",
 ]
 all = [
-    "wap[server,mcp]",
+    "webagent-protocol[server,mcp]",
 ]
 dev = [
-    "wap[server,mcp]",
+    "webagent-protocol[server,mcp]",
     "pytest>=8",
     "pytest-asyncio>=0.23",
+    "ruff>=0.6",
+    "build>=1.2",
 ]
 
 [project.scripts]
@@ -58,8 +76,11 @@ wap-mcp = "wap.mcp.bridge:main"
 
 [project.urls]
 Homepage = "https://github.com/varadganjoo/WebAgent-Protocol"
+Documentation = "https://github.com/varadganjoo/WebAgent-Protocol#readme"
 Specification = "https://github.com/varadganjoo/WebAgent-Protocol/blob/main/docs/spec_rfc.md"
-Whitepaper = "https://github.com/varadganjoo/WebAgent-Protocol/blob/main/docs/whitepaper.md"
+"MCP extension proposal" = "https://github.com/varadganjoo/WebAgent-Protocol/blob/main/docs/mcp_extension.md"
+Changelog = "https://github.com/varadganjoo/WebAgent-Protocol/blob/main/CHANGELOG.md"
+Issues = "https://github.com/varadganjoo/WebAgent-Protocol/issues"
 
 [tool.hatch.version]
 path = "wap/__init__.py"

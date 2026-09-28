@@ -1,5 +1,6 @@
 """WAP/1.0 specification layer: wire models, signatures and proof-of-work."""
 
+from .conversation import ConversationGuard, ConversationLimitError, ConversationPolicy
 from .crypto import (
     KeyFormatError,
     KeyPair,
@@ -46,6 +47,9 @@ __all__ = [
     "AgentMessage",
     "Capability",
     "Challenge",
+    "ConversationGuard",
+    "ConversationLimitError",
+    "ConversationPolicy",
     "ErrorCode",
     "ErrorDetail",
     "ErrorResponse",

@@ -1,5 +1,6 @@
-"""Provider SDK: expose business capabilities over WAP/1.0 (``pip install "wap[server]"``)."""
+"""Provider SDK: expose business capabilities over WAP/1.0 (``pip install "webagent-protocol[server]"``)."""
 
+from ..spec.conversation import ConversationPolicy
 from .app import (
     ActionContext,
     ActionResult,
@@ -14,6 +15,7 @@ from .rate_limiter import RateLimitDecision, RateLimiter, SlidingWindowCounter, 
 __all__ = [
     "ActionContext",
     "ActionResult",
+    "ConversationPolicy",
     "KeywordIntentRouter",
     "RateLimitDecision",
     "RateLimiter",

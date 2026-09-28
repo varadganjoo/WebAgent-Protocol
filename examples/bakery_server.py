@@ -6,6 +6,12 @@ Run it::
     # or
     wap serve examples.bakery_server:app --port 8000
 
+It serves three things from one set of functions:
+
+* ``/.well-known/agent.json``  the signed WAP manifest
+* ``/wap/v1/interact``         WAP (signed, proof-of-work protected, SSE streaming)
+* ``/mcp``                     the same tools as a standard MCP server
+
 Then talk to it::
 
     wap inspect localhost:8000
@@ -191,6 +197,7 @@ def create_bakery(
     pow_difficulty: int = 4,
     rate_limit: RateLimitPolicy | None = None,
     inventory: Inventory | None = None,
+    mcp_require_pow: bool | None = False,
 ) -> tuple[WAPServer, FastAPI, Inventory]:
     """Build the bakery agent. Returns ``(wap_server, fastapi_app, inventory)``."""
     inv = inventory or default_inventory()
@@ -202,6 +209,9 @@ def create_bakery(
         description="Neighbourhood sourdough bakery. Live pastry inventory, bulk quotes and pickup holds.",
         pow_difficulty=pow_difficulty,
         rate_limit=rate_limit or RateLimitPolicy(requests_per_minute=120, burst=30),
+        # Generic MCP clients (Claude Desktop, Cursor...) cannot solve proof-of-work, so the /mcp
+        # endpoint relies on rate limits and loop protection; the WAP endpoint keeps PoW.
+        mcp_require_pow=mcp_require_pow,
     )
 
     @wap.action(name="get_menu", description="List every pastry with its price and live availability.")

@@ -17,7 +17,7 @@ The MCP endpoint keeps WAP's guarantees where MCP has room for them:
   fresh challenge in ``_meta["io.webagent/challenge"]``;
 * multi-turn state continues via ``_meta["io.webagent/session_id"]``.
 
-Requires the ``mcp`` extra (``pip install "webagent-protocol[server,mcp]"``).
+Installed with the ``server`` extra (``pip install "webagent-protocol[server]"``).
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from mcp.shared.exceptions import MCPError
 
 from .. import __version__
-from ..spec.models import WELL_KNOWN_PATH, AgentMessage, ErrorCode, Role, authority_host
+from ..spec.models import WAP_VERSION, WELL_KNOWN_PATH, AgentMessage, ErrorCode, Role, authority_host
 from ..spec.pow import PowError
 from .app import ActionContext, WAPProtocolError
 
@@ -45,6 +45,7 @@ if TYPE_CHECKING:
 
     from .app import WAPServer
 
+EXTENSION_ID = "io.webagent/wap"
 META_PREFIX = "io.webagent/"
 META_SIGNED_REPLY = META_PREFIX + "signed_reply"
 META_SESSION_ID = META_PREFIX + "session_id"
@@ -82,7 +83,19 @@ class MCPEndpoint:
             on_list_tools=self._list_tools,
             on_call_tool=self._call_tool,
         )
+        # Declared as an MCP extension (SEP-2133) so clients can detect WAP support at initialization.
+        self.mcp.extensions[EXTENSION_ID] = self.extension_settings()
         self._manager: StreamableHTTPSessionManager | None = None
+
+    def extension_settings(self) -> dict[str, Any]:
+        return {
+            "wap_version": WAP_VERSION,
+            "manifest_url": self.wap.base_url + WELL_KNOWN_PATH,
+            "public_key": self.wap.public_key,
+            "pow_required": self.require_pow,
+            "signed_results": True,
+            "conversation_policy": self.wap.conversation_policy.as_dict(),
+        }
 
     # ------------------------------------------------------------------ MCP handlers
 
@@ -213,6 +226,7 @@ class MCPEndpoint:
     @asynccontextmanager
     async def running(self) -> AsyncIterator[None]:
         """Run the MCP session manager; entered from the host application's lifespan."""
+        self.mcp.extensions[EXTENSION_ID] = self.extension_settings()  # pick up config changed after mount
         manager = StreamableHTTPSessionManager(
             app=self.mcp, json_response=True, stateless=True, security_settings=self.security_settings()
         )
@@ -255,6 +269,7 @@ def mount_mcp(app: FastAPI, server: WAPServer, path: str = "/mcp") -> MCPEndpoin
 
 
 __all__ = [
+    "EXTENSION_ID",
     "META_CHALLENGE",
     "META_POW",
     "META_SESSION_ID",
