@@ -11,7 +11,7 @@ The provider SDK lives in :mod:`wap.server` (``pip install "webagent-protocol[se
 the Model Context Protocol bridge in :mod:`wap.mcp` (``pip install "webagent-protocol[mcp]"``).
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 from .client import (
     InteractionResult,

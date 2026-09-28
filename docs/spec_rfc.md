@@ -24,7 +24,7 @@ The WebAgent Protocol (WAP) lets an autonomous software agent acting for a user
 (a *user agent*) discover the machine-executable capabilities that a website's own
 agent (a *business agent*) offers, and invoke them over HTTP with schema-validated
 inputs, streamed outputs and end-to-end message signatures. Discovery uses a
-Well-Known URI (RFC 8615) at `/.well-known/agent.json`. Domain authenticity is
+Well-Known URI (RFC 8615) at `/.well-known/wap.json`. Domain authenticity is
 provided by Ed25519 signatures (RFC 8032) over a canonical JSON encoding. Business
 agents protect costly back-ends (inventory systems, large language models) with a
 stateless Hashcash-style proof-of-work gate and per-principal rate limits.
@@ -131,7 +131,7 @@ All JSON in this document is I-JSON [RFC7493]. Hexadecimal strings are lower-cas
 ```
  User agent                                            Business agent (bakery.example)
      |                                                          |
-     | GET https://bakery.example/.well-known/agent.json        |
+     | GET https://bakery.example/.well-known/wap.json          |
      |--------------------------------------------------------->|
      |            200 AgentManifest (signed) + X-WAP-Signature  |
      |<---------------------------------------------------------|
@@ -157,21 +157,24 @@ All JSON in this document is I-JSON [RFC7493]. Hexadecimal strings are lower-cas
 
 ### 4.1. Canonical Form
 
-The canonical form of a JSON value *v* is the UTF-8 encoding of *v* serialized with:
+The canonical form of a JSON value is its **JSON Canonicalization Scheme** form
+[RFC8785], encoded as UTF-8. In summary:
 
-1. object members sorted by key, comparing keys by Unicode code point;
-2. no insignificant whitespace (separators `,` and `:` only);
-3. non-ASCII characters emitted literally (not `\u`-escaped), with only the escapes
-   required by RFC 8259 Section 7;
-4. numbers in their shortest round-trip representation; a number with an integral
-   value MUST be serialized without a fraction or exponent (`1.0` → `1`);
-5. `NaN` and infinities are forbidden.
+1. object members are sorted by the UTF-16 code units of their names;
+2. there is no insignificant whitespace;
+3. strings use the minimal escaping of ECMAScript `JSON.stringify` (non-ASCII
+   characters are emitted literally);
+4. numbers are IEEE-754 doubles printed as by ECMAScript `Number.prototype.toString`
+   (`1.0` → `1`, `1e21` → `1e+21`, `1e-7` → `1e-7`, `-0` → `0`).
 
-This matches the output of ECMAScript `JSON.stringify` on a key-sorted value and of
-Python `json.dumps(v, sort_keys=True, separators=(",", ":"), ensure_ascii=False)`
-after integral floats are converted to integers. It is intentionally simpler than
-JCS [RFC8785], with which it coincides for all documents defined in this
-specification that avoid exponents.
+All JSON exchanged under this specification MUST be I-JSON [RFC7493]: integers
+outside ±2^53 and non-finite numbers are invalid (receivers reject them with
+`invalid_request`; values that need more precision are sent as strings).
+
+A JCS implementation is a few lines in most languages; in ECMAScript it is
+`JSON.stringify` applied recursively with `Object.keys(o).sort()`. The file
+`docs/test-vectors.json` contains fixed keys, documents, their canonical bytes and
+signatures; `tests/interop/verify_vectors.mjs` verifies them with Node.js alone.
 
 ### 4.2. Signing Documents
 
@@ -210,10 +213,13 @@ encoded (64 characters). Implementations MAY display a *fingerprint*, defined as
 A business agent for authority *A* MUST serve its manifest at
 
 ```
-https://A/.well-known/agent.json
+https://A/.well-known/wap.json
 ```
 
-in response to `GET` and `HEAD`, with media type `application/json`. Plain `http`
+in response to `GET` and `HEAD`, with media type `application/json`. For
+compatibility a server SHOULD serve the same document at `/.well-known/agent.json`;
+because other agent-description formats also use that path, a client MUST treat a
+document without a `wap_version` member found there as "no WAP manifest". Plain `http`
 MAY be used only for loopback authorities, or when both parties have explicitly
 opted in for testing. The response SHOULD include
 `Access-Control-Allow-Origin: *` and a `Cache-Control` header with a `max-age` no
@@ -238,6 +244,8 @@ greater than the time remaining until `expires_at`.
 | `conversation_policy` | object \| null | no | Loop-protection limits the server enforces (Section 12.2). |
 | `issued_at` | number (Unix s) | yes | Signing time. |
 | `expires_at` | number (Unix s) \| null | no | After this instant the manifest is invalid. |
+| `previous_keys` | array of string (64 hex) | no | Keys the domain rotated away from (Section 5.5). |
+| `key_endorsements` | object: key → signature | no | Each previous key's signature over the manifest (Section 5.5). |
 | `signature` | string (128 hex) | yes | Section 4.2, by `public_key`. |
 
 Unknown members MUST cause validation failure in version 1.0 (closed-world). Future
@@ -253,6 +261,7 @@ minor versions will relax this through `wap_version` negotiation.
 | `input_schema` | JSON Schema (2020-12) | yes | MUST describe an object. Validates `structured_data`. |
 | `output_schema` | JSON Schema \| null | no | Describes reply `structured_data`. |
 | `requires_auth` | boolean | yes | Whether a bearer token (Section 7.5) is needed. |
+| `effects` | `"read"` \| `"write"` \| `"financial"` | yes | What calling it does: `read` has no side effects; `write` changes state at the business (holds, bookings); `financial` moves money or creates a payment obligation. Default `write`. Clients use it for confirmations and retries (Section 7.7). |
 | `streaming` | boolean | yes | Whether the capability natively produces incremental tokens. |
 
 ### 5.4. Resolution and Verification Algorithm
@@ -266,8 +275,9 @@ absolute `http(s)` URL), a client:
 2. SHOULD, when acting on inputs chosen by a language model or other untrusted
    source, resolve the host and refuse private, loopback, link-local, multicast or
    reserved addresses (Section 13.7).
-3. Issues `GET {scheme}://A/.well-known/agent.json` and MUST NOT follow redirects.
-   A 3xx response is a discovery failure.
+3. Issues `GET {scheme}://A/.well-known/wap.json` and MUST NOT follow redirects.
+   A 3xx response is a discovery failure. On 404 it MAY try
+   `/.well-known/agent.json` (Section 5.1).
 4. Rejects bodies larger than 1 MiB.
 5. On a 404 or connection failure for a non-loopback, non-IP, non-`www.` authority,
    MAY retry once at `www.A`; in that case the manifest's `domain` MUST equal
@@ -281,12 +291,34 @@ absolute `http(s)` URL), a client:
    e. the host of `interaction_url`, `challenge_url` and `mcp_url` equals the host of
       `domain` or is a subdomain of it (**origin binding**), and neither uses `http`
       unless the authority is loopback or insecure mode is enabled;
-   f. if the client has a pinned key for `domain`, `public_key` equals it;
-   g. if `X-WAP-Signature` is present, it verifies over the raw body.
+   f. if the client has a pinned key *p* for `domain`: either `public_key` equals *p*,
+      or *p* is listed in `previous_keys` and `key_endorsements[p]` verifies
+      (Section 5.5), in which case the client SHOULD update its pin;
+   g. if the client applies DNS anchoring (Section 5.6), `public_key` is published;
+   h. if `X-WAP-Signature` is present, it verifies over the raw body.
 8. Caches the manifest until the earlier of `expires_at` and a local maximum TTL.
    Concurrent resolutions of the same authority SHOULD be coalesced.
 
 Any failure in step 6–7 MUST abort the interaction with a verification error.
+
+### 5.5. Key Rotation
+
+To rotate from key *k_old* to *k_new*, a domain signs its manifest with *k_new*, lists
+*k_old* in `previous_keys`, and adds `key_endorsements[k_old]`: the Ed25519 signature
+by *k_old* over the canonical manifest **without** `signature` and
+`key_endorsements`. Clients that pinned *k_old* verify the endorsement and migrate
+their pin; a changed key without a valid endorsement from the pinned key MUST be
+rejected. Domains SHOULD remove previous keys once clients have had time to migrate
+(e.g. after a few manifest lifetimes). Endorsements do not help if *k_old* itself was
+compromised; in that case pins must be reset out of band.
+
+### 5.6. DNS Anchoring (OPTIONAL)
+
+A domain MAY publish its key(s) in DNS as TXT records at `_wap.<host>` with the value
+`v=wap1; k=<64 hex public key>` (one record per key during a rotation). A client MAY
+require that `public_key` be among the published keys ("if-present": only when any
+are published; "require": always). With DNSSEC this anchors the key independently of
+the web server and its TLS certificate.
 
 ## 6. Proof-of-Work Challenges
 
@@ -363,6 +395,8 @@ reference client makes at most 3 attempts).
 | `capability_id` | string \| null | no | Target capability. Null means free-text intent. |
 | `structured_data` | object \| null | no | Capability input (requests) or output (replies). |
 | `in_reply_to` | string \| null | reply | `message_id` of the request being answered. |
+| `idempotency_key` | string (8–128) \| null | no | Section 7.7. |
+| `max_effects` | `"read"` \| `"write"` \| `"financial"` \| null | no | Strongest effect the sender permits in this turn (Section 7.7). |
 | `timestamp` | number (Unix s) | yes | Sender's clock. |
 | `pow_seed` | string \| null | cond. | Section 6.4. |
 | `pow_nonce` | string \| null | cond. | Section 6.4. |
@@ -373,7 +407,9 @@ reference client makes at most 3 attempts).
 
 The server receives `POST interaction_url` with an `application/json` body of at most
 256 KiB containing one `AgentMessage`. It MUST perform the following steps **in
-order** and MUST NOT invoke capability logic before step 9:
+order** and MUST NOT invoke capability logic before step 10. Every protection's
+thresholds are the operator's choice, and an operator MAY disable a protection or
+vary it per request (Section 12.3); the order MUST NOT change.
 
 1. **IP rate limit** (Section 12.1). Failure: `rate_limited`.
 2. **Version.** If `X-WAP-Version` is present and its major version is not 1:
@@ -385,24 +421,31 @@ order** and MUST NOT invoke capability logic before step 9:
 5. **Freshness and replay.** `|now − timestamp|` MUST NOT exceed the server's skew
    window (RECOMMENDED 300 s), and (`public_key`, `message_id`) MUST NOT have been
    seen within twice that window: `replay_detected`.
-6. **Agent-key rate limit.** Charged only after step 4 so an attacker cannot exhaust
-   another agent's budget by claiming its key.
-7. **Proof-of-work**, if enabled (Section 6.4).
-8. **Authorization.** If an `Authorization: Bearer <token>` header is present it is
-   validated; an invalid token yields `auth_required`. Capabilities with
-   `requires_auth: true` require a valid token.
-9. **Session binding, loop check and dispatch.** A session is bound to the
-   `public_key` that created it; a message for an existing `session_id` signed by
-   a different key yields `forbidden`. The request is then checked against the
-   conversation guard (Section 12.2) and refused with `loop_detected` or
-   `conversation_limit` without invoking any capability. If `capability_id` is set, `structured_data` (or `{}`) MUST
-   validate against the capability's `input_schema` (`validation_error`), and an
-   undeclared capability yields `unknown_capability`. Otherwise the server's intent
-   handler (e.g. an LLM router) processes `content`.
+6. **Authentication.** If an `Authorization: Bearer <token>` header is present it is
+   validated; an invalid token yields `auth_required`.
+7. **Admission.** The operator's admission policy (Section 12.3) may assign a tier
+   (limits, proof-of-work requirement, loop policy) or refuse the request
+   (`forbidden`).
+8. **Agent-key rate limit and proof-of-work.** The agent-key limit is charged only
+   after step 4, so an attacker cannot exhaust another agent's budget by claiming
+   its key. Proof-of-work (Section 6.4) is verified last, so a seed is only consumed
+   by a request that is otherwise acceptable.
+9. **Turn.** The session is locked (concurrent requests for one session are
+   serialised), loaded and bound to the `public_key` that created it (a different key
+   yields `forbidden`; a lock that cannot be obtained yields `session_busy`). An
+   `idempotency_key` is resolved (Section 7.7). The conversation guard (Section 12.2)
+   refuses loops with `loop_detected` or `conversation_limit`.
+10. **Dispatch.** If `capability_id` is set, `structured_data` (or `{}`) MUST
+   validate against the capability's `input_schema` (`validation_error`), an
+   undeclared capability yields `unknown_capability`, and a capability whose
+   `effects` exceed the request's `max_effects` yields `effects_not_permitted`.
+   Otherwise the server's intent handler (e.g. an LLM router) processes `content`,
+   and the same `max_effects` rule applies to any capability it invokes.
 
-Checks are ordered from cheapest to most expensive; the proof-of-work seed is
-consumed only once the request is otherwise known to be well-formed and
-authentically signed.
+Checks are ordered from cheapest to most expensive. State that must be shared
+between server instances (rate meters, replay cache, spent seeds, sessions, loop
+guards, idempotency records) MUST be kept in a store shared by all instances that
+serve the domain.
 
 ### 7.3. Replies
 
@@ -442,8 +485,38 @@ equal the capability's `id`, `input_schema` and `output_schema`. The MCP
 endpoint declares the `io.webagent/wap` extension, returns the signed reply of
 Section 7.3 in `_meta["io.webagent/signed_reply"]`, accepts proof-of-work in
 `_meta["io.webagent/pow"]` and session continuation in
-`_meta["io.webagent/session_id"]`, and applies Sections 12.1 and 12.2. The
-binding is specified in `docs/mcp_extension.md`.
+`_meta["io.webagent/session_id"]`, accepts `_meta["io.webagent/idempotency_key"]`,
+maps `effects` to MCP tool annotations (`readOnlyHint`, `destructiveHint`,
+`idempotentHint`), and applies Section 12. The binding is specified in
+`docs/mcp_extension.md`.
+
+### 7.7. Effects, Confirmation and Idempotency
+
+**Effects.** Every capability declares `effects`. A user agent acting for a person
+SHOULD obtain that person's confirmation before invoking a `write` or `financial`
+capability (the reference MCP bridge does so through MCP elicitation). A request MAY
+carry `max_effects`; a business agent MUST NOT run a capability with stronger effects
+in that turn, including from a free-text intent handler, and instead answers
+`effects_not_permitted` with `details` naming `capability_id`, `effects` and the
+`payload` it would have used, so that the user can confirm and the capability can be
+invoked directly. User agents SHOULD send free-text requests with the strongest
+effect they may perform without confirmation (typically `read`).
+
+**Idempotency.** A request MAY carry `idempotency_key`. The server records the first
+request with a given key (scoped to the sender's agent key) and its outcome for a
+retention period (RECOMMENDED 24 h):
+
+* a later request with the same key and the same `capability_id`, `structured_data`
+  and `content` receives the original result, newly signed for the new request, with
+  the header `X-WAP-Idempotent-Replay: true`, and the capability is **not** run again;
+* the same key with different content yields `idempotency_conflict`;
+* while the first request is still being processed, a retry yields
+  `idempotency_conflict` with `retry_after`;
+* if the first request failed, the key is released and a retry runs normally.
+
+User agents SHOULD attach an idempotency key to every request for a non-`read`
+capability and reuse it for automatic retries after transport failures. They MUST
+NOT automatically retry a non-`read` capability without one.
 
 ## 8. Streaming (Server-Sent Events)
 
@@ -488,9 +561,12 @@ Errors use the HTTP status below and a JSON body:
 | `invalid_signature` | 401 | Missing `public_key` or bad signature. |
 | `auth_required` | 401 | Missing or rejected bearer token. |
 | `forbidden` | 403 | Session owned by a different agent key, or business policy refusal. |
+| `effects_not_permitted` | 403 | A capability's effects exceed the request's `max_effects` (Section 7.7). |
 | `pow_invalid` | 403 | Wrong, expired, forged or replayed solution; `details.reason` ∈ {`malformed`, `forged`, `expired`, `replayed`, `insufficient_work`}. |
 | `unknown_capability` | 404 | `details.available` lists capability IDs. |
 | `replay_detected` | 409 | Duplicate `message_id` or timestamp outside the window. |
+| `session_busy` | 409 | Another request for the session is in progress; retry after `retry_after`. |
+| `idempotency_conflict` | 409 | Key reused for different content, or original still in progress (Section 7.7). |
 | `validation_error` | 422 | `structured_data` violates `input_schema`, or a business rule rejected the values; `details.errors`. |
 | `loop_detected` | 409 | The request would continue a repetitive exchange (Section 12.2); `details` names the pattern. Do not retry unchanged. |
 | `pow_required` | 428 | Proof-of-work needed; `details.challenge` holds a challenge. |
@@ -508,6 +584,7 @@ their HTTP status class.
 |---|---|---|
 | `X-WAP-Version` | both | Protocol version, `major.minor`. Requests SHOULD send it; servers MUST send `1.0` on all WAP responses. |
 | `X-WAP-Signature` | response | Hex Ed25519 signature by the domain key over the exact response body (Section 4.3). |
+| `X-WAP-Idempotent-Replay` | response | `true` when the reply repeats the result of an earlier request with the same `idempotency_key` (Section 7.7). |
 | `Authorization` | request | `Bearer <token>` for `requires_auth` capabilities. |
 | `Accept` | request | `text/event-stream` selects streaming; otherwise JSON. |
 | `Retry-After` | response | Integer seconds (RFC 9110 §10.2.3) on 429. |
@@ -569,7 +646,8 @@ un-prefixed names.
 
 ### 12.1. Rate Limiting
 
-`rate_limit_policy` advertises the limits the server enforces:
+`rate_limit_policy` advertises the default limits the server enforces (an empty
+object means the server publishes no default limit):
 
 ```json
 {"requests_per_minute": 60, "burst": 10, "scopes": ["ip", "agent_key"]}
@@ -635,6 +713,24 @@ report back to the user") rather than an error the model may simply retry.
 Capability authors SHOULD make replies deterministic once a negotiation has
 concluded (for example, repeating a final offer verbatim rather than incrementing
 a round counter), which lets guards recognise the stalemate early.
+
+The policy also has `max_identical_requests` (the same request sent this many times
+in a row is refused even if the replies differ, catching stalls) and an optional
+`max_duration_seconds` per session.
+
+### 12.3. Operator Configuration and Admission Tiers
+
+Every threshold in this section, and whether proof-of-work is required, is chosen by
+the operator; a server MAY disable any of these protections. A server MAY also
+evaluate an *admission policy* after authentication (Section 7.2 step 7) that, per
+request, selects a tier with its own agent-key limits, proof-of-work requirement and
+minimum difficulty, and loop policy, or refuses the request. Typical uses are higher
+limits and no proof-of-work for authenticated customers or partner agents, a trusted
+aggregator exempted from cross-session loop detection, and blocking abusive keys. A
+server MAY raise proof-of-work difficulty automatically under load; because the
+difficulty is authenticated inside each seed, clients need no coordination. The
+manifest's `rate_limit_policy`, `pow_required` and `conversation_policy` describe the
+defaults for anonymous callers.
 
 ## 13. Security Considerations
 
@@ -704,9 +800,9 @@ agent's model and MUST be treated as data, not instructions.
 
 ### 13.9. Key Management
 
-Domain private keys SHOULD be stored in a secrets manager and rotated by publishing a
-new manifest. Because manifests expire, rotation completes within one manifest TTL
-for clients that do not pin keys. Ephemeral domain keys are acceptable only for
+Domain private keys SHOULD be stored in a secrets manager and rotated per Section 5.5.
+Because manifests expire, rotation completes within one manifest TTL for clients that
+do not pin keys; pinning clients follow endorsed rotations. Ephemeral domain keys are acceptable only for
 development.
 
 ### 13.10. Clock Skew
@@ -727,15 +823,15 @@ expire session state.
 This document requests registration of the following Well-Known URI in the "Well-Known
 URIs" registry established by RFC 8615:
 
-* URI suffix: `agent.json`
+* URI suffix: `wap.json`
 * Change controller: WebAgent Protocol authors
 * Specification document: this document
 * Status: provisional
 
-Implementers should be aware that other agent-description formats have used the same
-path. A WAP manifest is recognisable by its `wap_version` member; clients encountering
-a document without it at this location MUST treat discovery as failed rather than
-guess at its semantics.
+The legacy alias `/.well-known/agent.json` (Section 5.1) is not requested for
+registration: other agent-description formats have used it. A WAP manifest is
+recognisable by its `wap_version` member; clients encountering a document without it
+at that location MUST treat discovery as failed rather than guess at its semantics.
 
 No other IANA actions are requested. The `X-WAP-*` headers are not registered.
 
@@ -748,6 +844,7 @@ No other IANA actions are requested. The `X-WAP-*` headers are not registered.
 * [RFC3986] Berners-Lee, T., et al., "Uniform Resource Identifier (URI): Generic Syntax", RFC 3986.
 * [RFC8259] Bray, T., "The JavaScript Object Notation (JSON) Data Interchange Format", RFC 8259.
 * [RFC7493] Bray, T., "The I-JSON Message Format", RFC 7493.
+* [RFC8785] Rundgren, A., et al., "JSON Canonicalization Scheme (JCS)", RFC 8785.
 * [RFC8032] Josefsson, S., Liusvaara, I., "Edwards-Curve Digital Signature Algorithm (EdDSA)", RFC 8032.
 * [RFC8615] Nottingham, M., "Well-Known Uniform Resource Identifiers (URIs)", RFC 8615.
 * [RFC9110] Fielding, R., et al., "HTTP Semantics", RFC 9110.
@@ -758,7 +855,6 @@ No other IANA actions are requested. The `X-WAP-*` headers are not registered.
 
 ### 16.2. Informative References
 
-* [RFC8785] Rundgren, A., et al., "JSON Canonicalization Scheme (JCS)", RFC 8785.
 * [RFC6648] Saint-Andre, P., et al., "Deprecating the "X-" Prefix", RFC 6648.
 * [HASHCASH] Back, A., "Hashcash — A Denial of Service Counter-Measure", 2002.
 * [DWORK-NAOR] Dwork, C., Naor, M., "Pricing via Processing or Combatting Junk Mail", CRYPTO 1992.
@@ -793,6 +889,10 @@ Abbreviated manifest schema:
     "rate_limit_policy": {"type": "object"},
     "issued_at": {"type": "number"},
     "expires_at": {"type": ["number", "null"]},
+    "mcp_url": {"type": ["string", "null"], "format": "uri"},
+    "conversation_policy": {"type": ["object", "null"]},
+    "previous_keys": {"type": "array", "items": {"type": "string", "pattern": "^[0-9a-f]{64}$"}},
+    "key_endorsements": {"type": "object", "additionalProperties": {"type": "string", "pattern": "^[0-9a-f]{128}$"}},
     "signature": {"type": "string", "pattern": "^[0-9a-f]{128}$"}
   },
   "$defs": {
@@ -807,6 +907,7 @@ Abbreviated manifest schema:
         "input_schema": {"type": "object"},
         "output_schema": {"type": ["object", "null"]},
         "requires_auth": {"type": "boolean"},
+        "effects": {"enum": ["read", "write", "financial"]},
         "streaming": {"type": "boolean"}
       }
     }
@@ -819,7 +920,7 @@ Abbreviated manifest schema:
 Discovery (signatures and keys shortened with `…`):
 
 ```http
-GET /.well-known/agent.json HTTP/1.1
+GET /.well-known/wap.json HTTP/1.1
 Host: bakery.example
 X-WAP-Version: 1.0
 
@@ -884,7 +985,10 @@ data: {"wap_version":"1.0","message_id":"2d34…","session_id":"492b4c11…","ro
 
 A conforming **business agent**:
 
-- [ ] serves a signed manifest at `/.well-known/agent.json` with `X-WAP-Signature`;
+- [ ] serves a signed manifest at `/.well-known/wap.json` with `X-WAP-Signature`;
+- [ ] canonicalises with RFC 8785 and passes `docs/test-vectors.json`;
+- [ ] keeps replay, proof-of-work, rate-limit, session and idempotency state in a store shared by all instances;
+- [ ] honours `idempotency_key` and `max_effects` (Section 7.7);
 - [ ] binds `domain`, `interaction_url` and `challenge_url` to its own origin;
 - [ ] implements the Section 7.2 pipeline in order;
 - [ ] signs every reply and error body with the domain key;
@@ -895,6 +999,7 @@ A conforming **business agent**:
 
 A conforming **user agent**:
 
+- [ ] confirms `write`/`financial` actions with the user and sends idempotency keys for them;
 - [ ] refuses plain HTTP for non-loopback domains by default and never follows
       discovery redirects;
 - [ ] verifies manifest signature, domain binding, origin binding and expiry;

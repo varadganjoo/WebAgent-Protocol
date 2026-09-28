@@ -15,7 +15,7 @@ context tokens, fragile under routine redesigns, unauthenticated, and, as agents
 both sides of a transaction, economically hazardous for businesses whose own agents are
 backed by metered models. We present the WebAgent Protocol (WAP), a small open standard that
 lets any domain publish a signed, machine-readable description of what its agent can do at
-`/.well-known/agent.json` (RFC 8615), and lets any user agent invoke those capabilities with
+`/.well-known/wap.json` (RFC 8615), and lets any user agent invoke those capabilities with
 JSON-Schema-validated inputs, streamed outputs, and Ed25519-signed replies. WAP adds an
 asymmetric economic defence, a stateless Hashcash-style proof-of-work gate combined with
 per-principal rate limits, so that rejecting abusive traffic costs the business microseconds
@@ -100,7 +100,7 @@ clients work unchanged and WAP-aware clients gain verification (see `docs/mcp_ex
 ### 2.1 One URL per domain
 
 WAP's only discovery requirement is that a domain serve a signed manifest at
-`https://<domain>/.well-known/agent.json`. Given nothing but a domain name, which users say
+`https://<domain>/.well-known/wap.json`. Given nothing but a domain name, which users say
 naturally ("ask the bakery on Mill Lane", "check bakery.example"), an agent can find the
 business agent, learn its capabilities, and verify its key. No registry, directory, or central
 authority is involved, so the web's existing naming and PKI remain the root of trust.
@@ -108,7 +108,7 @@ authority is involved, so the web's existing naming and PKI remain the root of t
 ```
                  ┌────────────────────────── bakery.example ──────────────────────────┐
                  │                                                                    │
-  User agent ──▶ │ GET /.well-known/agent.json  ──▶  signed AgentManifest             │
+  User agent ──▶ │ GET /.well-known/wap.json  ──▶  signed AgentManifest             │
   (or MCP host   │   • public_key (Ed25519)          • capabilities[] + JSON Schemas  │
    via wap-mcp)  │   • interaction_url               • pow_required, rate_limit_policy│
                  │                                                                    │
@@ -329,6 +329,21 @@ In a live run, a client repeatedly calling `negotiate_bulk_price` with the same 
 that instruction. A different request to the same site still succeeded. Loop protection is on by
 default and can be tuned through `ConversationPolicy`.
 
+### 5.4 Consent before consequences
+
+Loops are one way an agent can act against its user's interests; acting without asking is another.
+Every WAP capability declares its `effects`: `read`, `write` (a booking or a hold) or
+`financial` (moving money). A user agent asks its human before anything that is not `read`. In the
+reference MCP bridge this is an MCP elicitation prompt, bound cryptographically to the exact tool
+and arguments, so the model cannot reuse an approval for different parameters. Free-text requests
+are sent with `max_effects: "read"`. If the business's own agent decides to act, for example
+turning "hold two croissants for Ada" into a reservation, it must answer with the action it wanted
+to take instead of taking it, and the user confirms it explicitly.
+
+Every non-read request also carries an idempotency key. If a response is lost after the business
+has already acted, the client's automatic retry returns the original result instead of acting a
+second time. In testing, a connection dropped after a reservation was made led to exactly one hold.
+
 ## 6. Performance Benchmarks: Token Reduction vs HTML Scraping
 
 ### 6.1 Method
@@ -395,11 +410,24 @@ The qualitative gains that tokens do not capture are larger than the token savin
 
 ---
 
+### 6.4 Server throughput
+
+`examples/load_test.py` drives real uvicorn worker processes over HTTP. Every request includes a
+challenge fetch, a proof-of-work at difficulty 2, a signed request and a signed reply that the client
+verifies. On the same 4-vCPU machine, with the load generator spread over three processes, one worker
+served about **580 requests/s** (p50 51 ms, p99 104 ms) with no errors. Multi-worker deployments that
+share state through Redis served about 400–425 requests/s on this small machine, where Redis round trips
+and a shared CPU outweigh the extra workers; they should be measured on production hardware.
+
+The same test checks correctness under concurrency. Without a shared store, four workers accepted one
+replayed message four times and one proof-of-work solution twice. With Redis, both were accepted exactly
+once. This is why the reference implementation keeps all protocol state behind a pluggable store.
+
 ## 7. Future Work
 
-**Key transparency and DNS anchoring.** Publishing domain-key fingerprints in DNS (a TXT
-record under DNSSEC) or an append-only transparency log would let user agents detect a
-compromised origin serving a substituted key at first contact.
+**Key transparency.** The reference implementation supports key rotation with endorsements and
+optional DNS TXT anchoring of keys. An append-only transparency log of manifests would additionally
+let anyone audit which keys a domain has used over time.
 
 **Adaptive and memory-hard puzzles.** Difficulty could scale automatically with load or with
 per-principal reputation. Memory-hard functions (such as Argon2 or Equihash-style puzzles)

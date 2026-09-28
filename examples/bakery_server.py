@@ -36,7 +36,7 @@ import os
 import re
 import secrets
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from fastapi import FastAPI
@@ -84,15 +84,12 @@ class Quote:
 class Inventory:
     pastries: dict[str, Pastry]
     holds: dict[str, Hold] = field(default_factory=dict)
-    quotes: dict[str, Quote] = field(default_factory=dict)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     def _expire(self, now: float) -> None:
         for token in [t for t, h in self.holds.items() if h.expires_at <= now]:
             hold = self.holds.pop(token)
             self.pastries[hold.item].stock += hold.quantity
-        for quote_id in [q for q, quote in self.quotes.items() if quote.expires_at <= now]:
-            del self.quotes[quote_id]
 
     def find(self, query: str) -> Pastry:
         wanted = _normalize(query)
@@ -302,7 +299,9 @@ def create_bakery(
                     unit_price=round(offered_unit_price, 2),
                     expires_at=now + QUOTE_SECONDS,
                 )
-                inv.quotes[quote.quote_id] = quote
+                # Quotes live in the session (persisted by the WAP state store), so any worker
+                # can honour them and they can only be redeemed within this negotiation.
+                ctx.state.setdefault("quotes", {})[quote.quote_id] = asdict(quote)
                 negotiations.pop(pastry.name, None)
                 return NegotiationOutcome(status="accepted", quote_id=quote.quote_id, **base)
             if rnd >= MAX_NEGOTIATION_ROUNDS or floor >= thread["last_counter"]:
@@ -340,9 +339,11 @@ def create_bakery(
             unit_price = pastry.unit_price
             quote_applied = False
             if quote_id is not None:
-                quote = inv.quotes.get(quote_id)
+                stored = ctx.state.get("quotes", {}).get(quote_id)
+                quote = Quote(**stored) if stored else None
                 if (
                     quote is None
+                    or quote.expires_at <= now
                     or quote.session_id != ctx.session_id
                     or quote.item != pastry.name
                     or quote.quantity != quantity
@@ -353,7 +354,7 @@ def create_bakery(
                     )
                 unit_price = quote.unit_price
                 quote_applied = True
-                del inv.quotes[quote_id]
+                del ctx.state["quotes"][quote_id]
             pastry.stock -= quantity
             hold = Hold(
                 token="RSV-" + secrets.token_hex(8).upper(),

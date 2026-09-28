@@ -20,6 +20,10 @@ pytest -q                               # full suite, runs in-process in a few s
 
 - Add tests for behaviour changes. Security-relevant code (signatures, proof-of-work, rate limits, loop
   protection, resolution) needs adversarial tests, not just happy paths.
+- If you change canonicalization, signing or the wire models, regenerate the test vectors
+  (`python examples/generate_test_vectors.py`); CI checks they are current and verify in Node.js.
+- The suite runs Redis-backed and Node.js interop tests when `redis-server` and `node` are installed
+  (CI installs both); they are skipped otherwise.
 - Protocol changes must update [`docs/spec_rfc.md`](docs/spec_rfc.md) (and
   [`docs/mcp_extension.md`](docs/mcp_extension.md) if they touch the MCP binding) in the same pull request.
 - Note user-visible changes under an "Unreleased" heading in [`CHANGELOG.md`](CHANGELOG.md).

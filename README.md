@@ -12,15 +12,17 @@ that any website publishes, starting from nothing but its domain name.**
 MCP connects a model to tools you have installed. WebAgent Protocol (WAP) lets the model find tools on sites
 it has never seen:
 
-- **Discovery.** A website publishes a signed manifest at `/.well-known/agent.json`.
+- **Discovery.** A website publishes a signed manifest at `/.well-known/wap.json`.
 - **Native tools.** Claude, Cursor, Codex, or any other MCP host gets the site's capabilities as native tools.
 - **Signed results.** Every answer is signed by the business, so a quoted price is provably the business's
   price.
 - **Protection for the business.** Proof-of-work and rate limits stop bots from draining the business's AI
   budget.
-- **Protection for the user.** Built-in loop protection stops two AIs from talking in circles forever.
+- **Protection for the user.** Actions that change something or spend money are confirmed with the user,
+  and built-in loop protection stops two AIs from talking in circles forever.
 
-Free and open source (MIT). Python 3.11+.
+Free and open source (MIT). Python 3.11+. It's a library: you install it and build on it, and you choose how
+strict every protection is and where the state lives.
 
 <p align="center">
   <img src="docs/assets/shopper_demo.svg" alt="A shopper agent discovers a bakery's agent, verifies its signature, solves a proof-of-work challenge, negotiates a bulk price over three rounds and receives a signed reservation token" width="760">
@@ -34,7 +36,7 @@ from wap.server import WAPServer
 wap = WAPServer(name="Golden Crust Bakery", domain="bakery.example", private_key=KEY, require_pow=True)
 
 
-@wap.action(description="Units of a pastry available right now.")
+@wap.action(description="Units of a pastry available right now.", effects="read")
 async def check_pastry_stock(item: str) -> StockLevel: ...
 
 
@@ -45,7 +47,7 @@ That single decorator publishes:
 
 | Endpoint | Who uses it | What they get |
 |---|---|---|
-| `/.well-known/agent.json` | any agent, crawler, or registry | a signed manifest: tools, JSON Schemas, public key, policies |
+| `/.well-known/wap.json` | any agent, crawler, or registry | a signed manifest: tools, JSON Schemas, public key, policies |
 | `/mcp` | **any MCP client**, unchanged | standard MCP tools, with signed results and WAP metadata in `_meta` |
 | `/wap/v1/interact` | WAP clients and the `wap-mcp` bridge | signed envelopes, proof-of-work, SSE streaming, multi-turn sessions |
 
@@ -54,7 +56,7 @@ That single decorator publishes:
 | | MCP | A2A | **WebAgent Protocol** |
 |---|---|---|---|
 | Main job | connect a model host to tools it has been configured with | structured tasks between autonomous agents | let hosts **find and safely use tools that websites publish** |
-| How a server is found | configured by the user | agent card at a well-known URL | signed manifest at `/.well-known/agent.json` that links to the site's MCP endpoint |
+| How a server is found | configured by the user | agent card at a well-known URL | signed manifest at `/.well-known/wap.json` that links to the site's MCP endpoint |
 | Relationship to WAP | WAP **extends** it: WAP tools *are* MCP tools, and extra guarantees ride in `_meta` and a declared extension | complementary | — |
 
 WAP adds what an open-web setting needs and an installed-server setting can assume:
@@ -66,6 +68,24 @@ WAP adds what an open-web setting needs and an installed-server setting can assu
 
 The full proposal, written as an MCP Specification Enhancement Proposal, is in
 [`docs/mcp_extension.md`](docs/mcp_extension.md).
+
+## Built for real deployments
+
+Everything is configurable, and you bring your own infrastructure:
+
+| Concern | What the library gives you |
+|---|---|
+| **Several workers or machines** | Pluggable state store: in-memory by default, or `RedisStore` for shared rate limits, replay protection, sessions and idempotency. It's tested with two server instances sharing one Redis. |
+| **Your own rate limits** | Per-IP and per-agent-key limits, each tunable or disabled, plus an **admission hook** for tiers (for example, partners with high limits and no puzzles, logged-in customers, blocked keys). |
+| **Abuse under load** | Proof-of-work whose difficulty can rise automatically with load (`AdaptivePow`). |
+| **Retries without double-booking** | Idempotency keys, which the client adds automatically for anything that isn't read-only. A lost response is retried safely. |
+| **Humans stay in control** | Each action declares `effects` (`read`, `write`, `financial`). Your agent asks the user before side effects (a `confirm` hook, or MCP elicitation in the bridge), and free-text requests can't trigger actions without that confirmation. |
+| **Tool-poisoning defences** | Site-written descriptions are sanitised and labelled before a model sees them. Domain allow and block lists; private networks blocked by default in the bridge. |
+| **Interoperable signatures** | RFC 8785 canonical JSON, with [test vectors](docs/test-vectors.json) that an independent Node.js verifier checks in CI. |
+| **Key management** | Key rotation that pinned clients follow automatically, optional trust-on-first-use, optional DNS TXT anchoring. |
+| **Operations** | Observer hooks with logging and metrics helpers, a [deployment guide](docs/deployment.md), and a real multi-worker [load test](examples/load_test.py). |
+
+See [`docs/configuration.md`](docs/configuration.md) for every setting.
 
 ## Quickstart
 
@@ -93,12 +113,13 @@ wap ask localhost:8000 "hold 2 almond croissants for Ada"
 
 **Option A: the bridge (any WAP site, discovered on demand).** Add `wap-mcp` as an MCP server. When the model
 calls `wap_discover("bakery.example")`, the site's tools appear in its tool list as
-`bakery_example__check_pastry_stock`, `bakery_example__reserve_item`, and so on.
+`bakery_example__check_pastry_stock`, `bakery_example__reserve_item`, and so on. Before a tool that changes
+something runs (`bakery_example__reserve_item`), the host shows the user a confirmation prompt.
 
 ```json
 {
   "mcpServers": {
-    "webagent": { "command": "wap-mcp", "env": { "WAP_BLOCK_PRIVATE_NETWORKS": "1" } }
+    "webagent": { "command": "wap-mcp", "env": { "WAP_CONFIRM": "write" } }
   }
 }
 ```
@@ -114,22 +135,28 @@ For the other hosts:
 **Option B: connect straight to one site's `/mcp`.** This is plain remote MCP, for example
 `claude mcp add --transport http bakery https://bakery.example/mcp`.
 
-Environment variables for the bridge:
+The bridge's safety settings all have safe defaults and can be changed through environment variables:
 
-| Variable | Purpose |
-|---|---|
-| `WAP_BLOCK_PRIVATE_NETWORKS` | Refuse sites that resolve to private or loopback IPs. This is the SSRF guard, recommended when a model picks the domains. |
-| `WAP_AGENT_KEY` | Hex Ed25519 key for signing requests. If unset, an ephemeral key is used. |
-| `WAP_PINNED_KEYS` | JSON `{"domain": "<hex key>"}` for key pinning. |
-| `WAP_AUTH_TOKENS` | JSON `{"domain": "<bearer token>"}` for tools that require auth. |
-| `WAP_ALLOW_INSECURE` | Allow plain HTTP to non-loopback hosts (testing only). |
+- which actions need the user's approval (`WAP_CONFIRM`), and whether new sites need approval
+  (`WAP_APPROVE_SITES`);
+- domain allow and block lists (`WAP_ALLOWED_DOMAINS`, `WAP_BLOCKED_DOMAINS`);
+- private-network blocking;
+- how instruction-like site text is handled;
+- key pinning and auth tokens.
+
+The full list is in [`docs/configuration.md`](docs/configuration.md#mcp-bridge-wap-mcp).
 
 ### Use it from Python
 
 ```python
 from wap import WAPClient
 
-async with WAPClient() as client:
+
+async def ask_user(request) -> bool:  # your UI: called before any write/financial action
+    return input(f"Allow {request.summary()}? [y/N] ").lower() == "y"
+
+
+async with WAPClient(confirm=ask_user, trust_on_first_use=True) as client:
     manifest = await client.discover("bakery.example")  # verified signature, domain, expiry
 
     stock = await client.invoke("bakery.example", "check_pastry_stock", {"item": "Sourdough Croissant"})
@@ -160,7 +187,7 @@ def check_stock(sku: str) -> dict: ...
 
 wap = WAPServer(name="Acme", domain="acme.example", private_key=KEY)
 wap.include_mcp(tools)  # its tools become signed, discoverable, abuse-protected
-app = wap.create_app()  # serves agent.json, /wap/v1/interact and /mcp
+app = wap.create_app()  # serves wap.json, /wap/v1/interact and /mcp
 ```
 
 ## Loop protection: no infinite loops between agents
@@ -198,7 +225,7 @@ sequenceDiagram
     participant T as Business tools / LLM
 
     H->>Br: wap_discover("bakery.example")
-    Br->>B: GET /.well-known/agent.json
+    Br->>B: GET /.well-known/wap.json
     B-->>Br: signed manifest
     Note over Br: verify signature, domain & origin binding, expiry, pins
     Br-->>H: tools/list_changed → bakery_example__reserve_item, …
@@ -235,6 +262,9 @@ wap/
   the key that opened them, and negotiated quotes can only be redeemed in their own session.
 - **Economic defence.** Challenges are stateless and single-use, and their difficulty can't be downgraded.
   Requests are limited per IP and per agent key. Rejected traffic never reaches your code.
+- **Side effects need consent.** Write and financial actions are confirmed with the user and carry
+  idempotency keys. Free-text requests are read-only unless confirmed.
+- **Tool poisoning.** Site-written text is sanitised, truncated and labelled before any model sees it.
 - **The `/mcp` endpoint** enables the MCP SDK's DNS-rebinding protection for the manifest's domain.
 - **Signed means attributable, not safe.** Treat reply text as data, never as instructions.
 
@@ -242,7 +272,10 @@ wap/
 
 | | |
 |---|---|
+| [`docs/configuration.md`](docs/configuration.md) | Every setting for servers, clients and the bridge |
+| [`docs/deployment.md`](docs/deployment.md) | Keys, Redis and workers, proxies, capacity, monitoring |
 | [`docs/spec_rfc.md`](docs/spec_rfc.md) | WAP/1.0 specification: headers, errors, state machines, security |
+| [`docs/test-vectors.json`](docs/test-vectors.json) | Fixed keys, documents, canonical bytes and signatures for other implementations |
 | [`docs/mcp_extension.md`](docs/mcp_extension.md) | The MCP extension proposal (`io.webagent/wap`) |
 | [`docs/whitepaper.md`](docs/whitepaper.md) | *Beyond Scraping*: motivation, design, measured benchmarks |
 | [`CHANGELOG.md`](CHANGELOG.md) · [`CONTRIBUTING.md`](CONTRIBUTING.md) · [`SECURITY.md`](SECURITY.md) | Project docs |
@@ -255,13 +288,19 @@ at the default difficulty (≈ 42 µs vs ≈ 32 ms). The whitepaper gives the me
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                                   # 215 tests: spec, crypto, PoW, server, client, MCP, loops, CLI
+pytest -q                                   # full suite; Redis and Node.js tests run when installed
 ruff check . && ruff format --check .
 ```
 
-The tests run in-process, with no network or ports. They include the official MCP client talking to `/mcp`
-over streamable HTTP, and adversarial cases: forged or re-keyed manifests, tampered replies, replays, session
-hijacking, over-booking races, and looping agents. Contributions are welcome; see
+The suite covers:
+
+- the official MCP client talking to `/mcp` over streamable HTTP;
+- two server instances sharing a real Redis;
+- property-based fuzzing, and canonical JSON cross-checked against Node.js;
+- adversarial cases: forged or re-keyed manifests, tampered replies, replays, session hijacking, poisoned tool
+  descriptions, lost responses and double-booking, and looping agents.
+
+`python examples/load_test.py --workers 4 --redis-url redis://...` runs a real multi-process load test. Contributions are welcome; see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License

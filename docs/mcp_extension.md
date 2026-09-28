@@ -16,7 +16,7 @@ MCP standardizes how a model host connects to tools, but those tools must be ins
 user. This extension lets **any website publish MCP tools that a host can discover from nothing but a domain
 name**, and it adds three properties the open web needs that installed servers don't:
 
-1. **Discovery.** `https://<domain>/.well-known/agent.json` is a signed manifest that lists the site's tools and
+1. **Discovery.** `https://<domain>/.well-known/wap.json` is a signed manifest that lists the site's tools and
    points to its MCP endpoint (`mcp_url`).
 2. **Signed results.** Every successful `tools/call` result carries the business's Ed25519-signed reply in
    `_meta["io.webagent/signed_reply"]`. The signature is verifiable against the key in the manifest.
@@ -59,7 +59,7 @@ canonical JSON, signature algorithms, and the proof-of-work puzzle, is specified
 
 ### 1. Discovery
 
-A server implementing this extension MUST publish a WAP manifest at `/.well-known/agent.json` on its domain
+A server implementing this extension MUST publish a WAP manifest at `/.well-known/wap.json` on its domain
 (spec §5). The manifest MUST include:
 
 * `mcp_url`: the absolute URL of the site's MCP streamable-HTTP endpoint. Its host MUST equal the manifest's
@@ -82,7 +82,7 @@ At initialization the server MUST declare the extension under `ServerCapabilitie
     "extensions": {
       "io.webagent/wap": {
         "wap_version": "1.0",
-        "manifest_url": "https://bakery.example/.well-known/agent.json",
+        "manifest_url": "https://bakery.example/.well-known/wap.json",
         "public_key": "8c2fcce1…",
         "pow_required": false,
         "signed_results": true,
@@ -152,7 +152,17 @@ The server refuses **before running the tool** and returns `isError: true` with
 `_meta["io.webagent/error"].code` set to `loop_detected` or `conversation_limit`. A client-side guard SHOULD
 stop the host's model earlier and return an instruction to report back to the user instead of retrying.
 
-### 7. Host behaviour for discovered sites (informative)
+### 7. Effects, confirmation and idempotency
+
+Each tool's WAP `effects` (`read`, `write`, `financial`; spec §7.7) is exposed in
+`_meta["io.webagent/effects"]` and mapped to MCP annotations: `readOnlyHint` for
+`read`, `destructiveHint` for `financial`, `idempotentHint` for `read`. Hosts
+SHOULD obtain the user's confirmation before calling a `write` or `financial` tool.
+A client MAY send `_meta["io.webagent/idempotency_key"]`; a retry with the same key
+and arguments returns the original result with `_meta["io.webagent/idempotent_replay"]`
+set, and the tool does not run again.
+
+### 8. Host behaviour for discovered sites (informative)
 
 The reference bridge (`wap-mcp`) shows the intended user experience:
 
@@ -161,8 +171,19 @@ The reference bridge (`wap-mcp`) shows the intended user experience:
    `<site>__<capability>` with the site's own schema, and announces the change. Handshake-era clients receive
    `notifications/tools/list_changed`. Clients on the 2026-07-28 protocol receive a `ToolsListChanged` event
    on their `subscriptions/listen` stream.
-3. The model calls `bakery_example__reserve_item` like any other tool. The bridge handles signatures,
-   proof-of-work, sessions, and loop protection.
+3. The model calls `bakery_example__reserve_item` like any other tool. Because the tool has `write`
+   effects, the bridge first asks the user through MCP elicitation (a form request on handshake-era
+   hosts, an `input_required` round trip on 2026-07-28 hosts), binding the approval to the exact tool
+   name and arguments. Hosts that cannot show prompts are refused with an explanation.
+4. Free-text requests (`wap_ask`) are sent with `max_effects: "read"`. If the business wants to act,
+   it answers `effects_not_permitted` naming the capability and arguments, and the bridge tells the
+   model which tool to call so the user can confirm.
+5. Site-written text (names, descriptions, schema annotations) is sanitised before it reaches the
+   model: invisible and bidirectional-override characters are removed, text is truncated, and
+   instruction-like passages are stripped or flagged. Every description is labelled with its origin
+   and verified key. Operators can restrict reachable domains and require approval of new sites.
+
+The bridge handles signatures, proof-of-work, sessions, idempotency keys and loop protection.
 
 ## Rationale
 
