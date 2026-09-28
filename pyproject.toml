@@ -1,12 +1,11 @@
 [build-system]
-requires = ["hatchling>=1.21"]
+requires = ["hatchling>=1.21", "hatch-fancy-pypi-readme>=25"]
 build-backend = "hatchling.build"
 
 [project]
 name = "webagent-protocol"
-dynamic = ["version"]
+dynamic = ["version", "readme"]
 description = "WebAgent Protocol: an MCP extension that lets AI agents discover, verify and safely use tools published by any website."
-readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -94,6 +93,18 @@ Issues = "https://github.com/varadganjoo/WebAgent-Protocol/issues"
 
 [tool.hatch.version]
 path = "wap/__init__.py"
+
+# The README shows the demo image by relative path, which GitHub renders even while the repo is private.
+# PyPI cannot resolve relative paths, so the published description points at the file on GitHub.
+[tool.hatch.metadata.hooks.fancy-pypi-readme]
+content-type = "text/markdown"
+
+[[tool.hatch.metadata.hooks.fancy-pypi-readme.fragments]]
+path = "README.md"
+
+[[tool.hatch.metadata.hooks.fancy-pypi-readme.substitutions]]
+pattern = 'src="(docs/[^"]+)"'
+replacement = 'src="https://raw.githubusercontent.com/varadganjoo/WebAgent-Protocol/main/\1"'
 
 [tool.hatch.build.targets.wheel]
 packages = ["wap"]

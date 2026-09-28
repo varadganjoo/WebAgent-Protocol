@@ -25,7 +25,7 @@ Free and open source (MIT). Python 3.11+. It's a library: you install it and bui
 strict every protection is and where the state lives.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/varadganjoo/WebAgent-Protocol/main/docs/assets/shopper_demo.svg" alt="A shopper agent discovers a bakery's agent, verifies its signature, solves a proof-of-work challenge, negotiates a bulk price over three rounds and receives a signed reservation token" width="760">
+  <img src="docs/assets/shopper_demo.svg" alt="A shopper agent discovers a bakery's agent, verifies its signature, solves a proof-of-work challenge, negotiates a bulk price over three rounds and receives a signed reservation token" width="760">
 </p>
 
 ## One function, three ways in
