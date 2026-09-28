@@ -84,6 +84,8 @@ class ConversationPolicy:
     max_identical_requests: int = 5
     """The same request may be sent at most this many times in a row, even if answers differ
     (catches stalls where only counters or timestamps change). Raise it for deliberate polling."""
+    max_duration_seconds: float | None = None
+    """Optional wall-clock limit for one session, measured from its first turn."""
     max_repeats_across_sessions: int = 10
     """Looser threshold for loops that hop across fresh session ids under one agent key
     (one key may legitimately serve several end users)."""
@@ -96,7 +98,19 @@ class ConversationPolicy:
             "window_seconds": self.window_seconds,
             "max_identical_requests": self.max_identical_requests,
             "max_repeats_across_sessions": self.max_repeats_across_sessions,
+            "max_duration_seconds": self.max_duration_seconds,
         }
+
+    def across_sessions(self) -> ConversationPolicy:
+        """The policy applied per principal across sessions: repetition only, no turn cap."""
+        return ConversationPolicy(
+            max_turns=2**31,
+            max_repeats=self.max_repeats_across_sessions,
+            max_cycle_length=self.max_cycle_length,
+            window_seconds=self.window_seconds,
+            max_identical_requests=self.max_repeats_across_sessions,
+            max_repeats_across_sessions=self.max_repeats_across_sessions,
+        )
 
 
 @dataclass
@@ -112,7 +126,25 @@ class ConversationGuard:
 
     policy: ConversationPolicy = field(default_factory=ConversationPolicy)
     turns: int = 0
+    started_at: float | None = None
     _history: deque[_Exchange] = field(default_factory=deque)
+
+    def to_dict(self) -> dict[str, Any]:
+        """JSON form, so guards can live in a shared store between requests and workers."""
+        return {
+            "turns": self.turns,
+            "started_at": self.started_at,
+            "history": [[e.request, e.reply, e.at] for e in self._history],
+        }
+
+    @classmethod
+    def from_dict(cls, policy: ConversationPolicy, data: dict[str, Any] | None) -> ConversationGuard:
+        guard = cls(policy)
+        if data:
+            guard.turns = int(data.get("turns", 0))
+            guard.started_at = data.get("started_at")
+            guard._history = deque(_Exchange(r, p, float(t)) for r, p, t in data.get("history", []))
+        return guard
 
     def _recent(self, now: float) -> list[_Exchange]:
         cutoff = now - self.policy.window_seconds
@@ -129,6 +161,13 @@ class ConversationGuard:
         exchange in the cycle got the same reply each time).
         """
         now = time.time() if now is None else now
+        limit = self.policy.max_duration_seconds
+        if limit is not None and self.started_at is not None and now - self.started_at > limit:
+            raise ConversationLimitError(
+                "conversation_limit",
+                f"this conversation exceeded its time limit of {limit:g}s",
+                {"max_duration_seconds": limit},
+            )
         if self.turns >= self.policy.max_turns:
             raise ConversationLimitError(
                 "conversation_limit",
@@ -172,6 +211,8 @@ class ConversationGuard:
 
     def record(self, request_fp: str, reply_fp: str, now: float | None = None) -> None:
         now = time.time() if now is None else now
+        if self.started_at is None:
+            self.started_at = now
         self.turns += 1
         self._history.append(_Exchange(request_fp, reply_fp, now))
         max_len = max(self.policy.max_cycle_length * self.policy.max_repeats, self.policy.max_identical_requests)

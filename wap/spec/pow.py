@@ -166,10 +166,13 @@ class PowEngine:
         for s in expired:
             del self._spent[s]
 
-    def verify(self, seed: str, nonce: str, now: float | None = None, *, consume: bool = True) -> PowVerification:
-        """Verify a solution and (by default) mark the seed as spent.
+    def check(
+        self, seed: str, nonce: str, now: float | None = None, *, min_difficulty: int | None = None
+    ) -> PowVerification:
+        """Verify authenticity, expiry and work *without* tracking reuse (see :meth:`verify`).
 
-        Raises a :class:`PowError` subclass describing why verification failed.
+        Servers with several workers call this and then record the seed as spent in a
+        shared store. Raises a :class:`PowError` subclass on failure.
         """
         now = time.time() if now is None else now
         if not isinstance(nonce, str) or not nonce or len(nonce) > MAX_NONCE_LENGTH:
@@ -177,8 +180,20 @@ class PowEngine:
         difficulty, expires_at = self._authenticate(seed)
         if expires_at <= now:
             raise PowExpired("challenge has expired")
+        if min_difficulty is not None and difficulty < min_difficulty:
+            raise PowInsufficient(f"challenge difficulty {difficulty} is below the required {min_difficulty}")
         if not check_solution(seed, nonce, difficulty):
             raise PowInsufficient(f"hash does not have {difficulty} leading zeros")
+        return PowVerification(seed=seed, nonce=nonce, difficulty=difficulty, expires_at=expires_at)
+
+    def verify(self, seed: str, nonce: str, now: float | None = None, *, consume: bool = True) -> PowVerification:
+        """Verify a solution and (by default) mark the seed as spent in this process.
+
+        Raises a :class:`PowError` subclass describing why verification failed.
+        """
+        now = time.time() if now is None else now
+        result = self.check(seed, nonce, now)
+        expires_at = result.expires_at
         with self._lock:
             if seed in self._spent:
                 raise PowReplayed("challenge has already been used")
@@ -188,7 +203,7 @@ class PowEngine:
                 if len(self._spent) >= self._max_spent:
                     raise PowReplayed("too many outstanding solutions; retry shortly")
                 self._spent[seed] = expires_at
-        return PowVerification(seed=seed, nonce=nonce, difficulty=difficulty, expires_at=expires_at)
+        return result
 
     def spent_count(self) -> int:
         with self._lock:

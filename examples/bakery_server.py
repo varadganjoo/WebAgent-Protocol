@@ -45,6 +45,7 @@ from pydantic import BaseModel, Field
 from wap.server import ActionContext, ActionResult, KeywordIntentRouter, WAPProtocolError, WAPServer
 from wap.spec.conversation import ConversationPolicy
 from wap.spec.models import ErrorCode, RateLimitPolicy
+from wap.storage import StateStore
 
 HOLD_SECONDS = 30 * 60
 QUOTE_SECONDS = 10 * 60
@@ -200,8 +201,14 @@ def create_bakery(
     inventory: Inventory | None = None,
     mcp_require_pow: bool | None = False,
     conversation_policy: ConversationPolicy | None = None,
+    store: StateStore | None = None,
+    **server_options: Any,
 ) -> tuple[WAPServer, FastAPI, Inventory]:
-    """Build the bakery agent. Returns ``(wap_server, fastapi_app, inventory)``."""
+    """Build the bakery agent. Returns ``(wap_server, fastapi_app, inventory)``.
+
+    ``store`` (e.g. ``RedisStore.from_url(...)``) shares limits and sessions between
+    workers; any other ``WAPServer`` option can be passed through ``server_options``.
+    """
     inv = inventory or default_inventory()
     wap = WAPServer(
         name="Golden Crust Bakery",
@@ -215,9 +222,11 @@ def create_bakery(
         # endpoint relies on rate limits and loop protection; the WAP endpoint keeps PoW.
         mcp_require_pow=mcp_require_pow,
         conversation_policy=conversation_policy,
+        store=store,
+        **server_options,
     )
 
-    @wap.action(name="get_menu", description="List every pastry with its price and live availability.")
+    @wap.action(name="get_menu", description="List every pastry with its price and live availability.", effects="read")
     async def get_menu() -> Menu:
         async with inv.lock:
             inv._expire(time.time())
@@ -232,6 +241,7 @@ def create_bakery(
     @wap.action(
         name="check_pastry_stock",
         description="Check how many units of a pastry are available right now (net of active holds).",
+        effects="read",
     )
     async def check_pastry_stock(item: str) -> StockLevel:
         async with inv.lock:
@@ -252,6 +262,7 @@ def create_bakery(
             "counters, or makes a final offer. Accepted offers return a quote_id valid for 10 minutes "
             "that reserve_item will honour within the same session."
         ),
+        effects="read",  # quotes are non-binding; nothing is committed until reserve_item
     )
     async def negotiate_bulk_price(
         item: str,
@@ -307,6 +318,7 @@ def create_bakery(
             "Hold pastries for pickup for 30 minutes. Returns a reservation_token to present at the counter. "
             "Pass a quote_id from negotiate_bulk_price to lock in a negotiated price."
         ),
+        effects="write",
     )
     async def reserve_item(
         item: str,

@@ -1,17 +1,18 @@
 """HTTP endpoints for WAP/1.0: ``/.well-known/agent.json``, ``/wap/v1/challenge`` and ``/wap/v1/interact``.
 
 The interaction endpoint enforces the request pipeline defined in
-``docs/spec_rfc.md`` Section 7, in this order:
+``docs/spec_rfc.md`` Section 7.2, in this order:
 
-1. per-IP rate limit (cheapest check first),
+1. per-IP rate limit (cheapest check first; configurable or disabled),
 2. protocol version negotiation,
 3. envelope validation,
 4. Ed25519 signature verification against the sender's declared key,
-5. freshness window and replay detection,
-6. per-agent-key rate limit,
-7. proof-of-work verification (only now is a challenge consumed),
-8. bearer authorisation,
-9. session binding, then dispatch to the capability or intent handler.
+5. freshness window and replay detection (shared through the state store),
+6. bearer authentication,
+7. admission hook, per-agent-key rate limit and proof-of-work (only now is a
+   challenge consumed),
+8. turn: session lock and ownership, idempotent-retry resolution, loop guards,
+9. dispatch to the capability or intent handler.
 
 Nothing expensive (tools, databases, LLMs) runs before step 9.
 """
@@ -44,12 +45,13 @@ from ..spec.models import (
     Role,
     StreamEventType,
 )
-from ..spec.pow import PowError
-from .app import ActionContext, Chunk, WAPProtocolError
+from .admission import AdmissionRequest
+from .app import Chunk, Turn, WAPProtocolError
 
 if TYPE_CHECKING:
     from .app import WAPServer
-    from .rate_limiter import RateLimitDecision
+
+HEADER_IDEMPOTENT_REPLAY = "X-WAP-Idempotent-Replay"
 
 MAX_BODY_BYTES = 256 * 1024
 _TOKEN_SPLIT_RE = re.compile(r"(\s+)")
@@ -119,22 +121,10 @@ def _split_tokens(text: str, words_per_token: int = 1) -> list[str]:
     return tokens
 
 
-def _rate_limited(decision: RateLimitDecision) -> WAPProtocolError:
-    return WAPProtocolError(
-        ErrorCode.RATE_LIMITED,
-        f"rate limit exceeded for {decision.scope or 'client'}",
-        retry_after=round(decision.retry_after, 3),
-        details={"scope": decision.scope, "limit_per_minute": decision.limit},
-        headers=decision.headers(),
-    )
-
-
-async def _admit(server: WAPServer, request: Request) -> tuple[ActionContext, dict[str, str]]:
-    """Run pipeline steps 1-8 and return a ready-to-dispatch context plus response headers."""
+async def _admit(server: WAPServer, request: Request) -> tuple[Turn, dict[str, str]]:
+    """Run pipeline steps 1-8 and return an opened turn plus response headers."""
     ip = client_ip(request, server.trust_forwarded_for)
-    decision = await server.rate_limiter.check(ip=ip)
-    if not decision.allowed:
-        raise _rate_limited(decision)
+    headers = await server.limit_ip(ip)
 
     version = request.headers.get(HEADER_VERSION)
     if version is not None and version.split(".")[0] != WAP_VERSION.split(".")[0]:
@@ -163,51 +153,35 @@ async def _admit(server: WAPServer, request: Request) -> tuple[ActionContext, di
     if not verify_model(message, message.public_key):
         raise WAPProtocolError(ErrorCode.INVALID_SIGNATURE, "message signature does not verify against public_key")
 
-    now = time.time()
-    skew = abs(now - message.timestamp)
-    if skew > server.max_clock_skew_seconds:
-        raise WAPProtocolError(
-            ErrorCode.REPLAY_DETECTED,
-            f"message timestamp is outside the accepted window (±{int(server.max_clock_skew_seconds)}s)",
-            details={"server_time": now},
-        )
-    if not server.replay_cache.check_and_add(f"{message.public_key}:{message.message_id}", now):
-        raise WAPProtocolError(ErrorCode.REPLAY_DETECTED, "message_id has already been processed")
-
-    decision = await server.rate_limiter.check_keys(
-        [("agent_key", f"key:{message.public_key}")] if "agent_key" in server.rate_limit_policy.scopes else []
-    )
-    if not decision.allowed:
-        raise _rate_limited(decision)
-
-    if server.require_pow:
-        if message.pow_seed is None or message.pow_nonce is None:
-            raise WAPProtocolError(
-                ErrorCode.POW_REQUIRED,
-                "this agent requires proof-of-work; solve the attached challenge and resend",
-                details={"challenge": server.pow.issue().model_dump(mode="json")},
-            )
-        try:
-            server.pow.verify(message.pow_seed, message.pow_nonce)
-        except PowError as exc:
-            raise WAPProtocolError(
-                ErrorCode.POW_INVALID,
-                f"proof-of-work rejected: {exc}",
-                details={"reason": exc.reason, "challenge": server.pow.issue().model_dump(mode="json")},
-            ) from exc
-
+    await server.check_replay(message)
     principal = await server.authenticate(request.headers.get("authorization"))
-    session = server.sessions.get_or_create(message.session_id, message.public_key)
-    server.check_conversation(session, message, f"key:{message.public_key}")
-    ctx = ActionContext(
-        server=server,
-        message=message,
-        session=session,
+    decision, key_headers = await server.admit(
+        AdmissionRequest(
+            client_ip=ip,
+            agent_key=message.public_key,
+            principal=principal,
+            capability_id=message.capability_id,
+            transport="wap",
+            headers=dict(request.headers),
+        ),
+        pow_seed=message.pow_seed,
+        pow_nonce=message.pow_nonce,
+    )
+    turn = server.open_turn(
+        message,
+        owner_key=message.public_key,
+        principal_key=f"key:{message.public_key}",
         client_ip=ip,
         agent_key=message.public_key,
         principal=principal,
+        tier=decision.tier,
     )
-    return ctx, decision.headers()
+    await turn.open()
+    return turn, {**headers, **key_headers}
+
+
+def _encode(event: StreamEventType, payload: Any) -> dict[str, str]:
+    return {"event": event.value, "data": json.dumps(payload, separators=(",", ":"), ensure_ascii=False)}
 
 
 def build_router(server: WAPServer) -> APIRouter:
@@ -215,33 +189,70 @@ def build_router(server: WAPServer) -> APIRouter:
 
     @router.get(WELL_KNOWN_PATH, include_in_schema=True, summary="WAP discovery manifest (RFC 8615)")
     async def well_known_agent(request: Request) -> Response:
-        decision = await server.rate_limiter.check(ip=client_ip(request, server.trust_forwarded_for))
-        if not decision.allowed:
-            return error_response(server, _rate_limited(decision))
-        return manifest_response(server)
+        try:
+            headers = await server.limit_ip(client_ip(request, server.trust_forwarded_for))
+        except WAPProtocolError as exc:
+            return error_response(server, exc)
+        response = manifest_response(server)
+        response.headers.update(headers)
+        return response
 
     @router.get(CHALLENGE_PATH, summary="Issue a proof-of-work challenge")
     async def challenge(request: Request) -> Response:
-        decision = await server.rate_limiter.check(ip=client_ip(request, server.trust_forwarded_for))
-        if not decision.allowed:
-            return error_response(server, _rate_limited(decision))
-        if not server.require_pow:
+        try:
+            headers = await server.limit_ip(client_ip(request, server.trust_forwarded_for))
+        except WAPProtocolError as exc:
+            return error_response(server, exc)
+        if not server.require_pow and server.admission is None:
             return error_response(
                 server, WAPProtocolError(ErrorCode.INVALID_REQUEST, "proof-of-work is not enabled on this agent")
             )
-        issued = server.pow.issue()
+        issued = await server.issue_challenge()
         return signed_json_response(
-            server, issued.model_dump(mode="json"), headers={"Cache-Control": "no-store", **decision.headers()}
+            server, issued.model_dump(mode="json"), headers={"Cache-Control": "no-store", **headers}
         )
 
     @router.post(INTERACT_PATH, summary="Send a signed AgentMessage; JSON or SSE reply")
     async def interact(request: Request) -> Response:
         try:
-            ctx, headers = await _admit(server, request)
+            turn, headers = await _admit(server, request)
         except WAPProtocolError as exc:
+            if exc.code is not ErrorCode.RATE_LIMITED:
+                server.emit("request.rejected", code=exc.code.value)
             return error_response(server, exc)
 
         wants_stream = "text/event-stream" in request.headers.get("accept", "")
+
+        if turn.replay is not None:
+            await turn.close()
+            replay = turn.replay
+            headers = {**headers, HEADER_IDEMPOTENT_REPLAY: "true"}
+            if not wants_stream:
+                return signed_json_response(server, replay.model_dump(mode="json"), headers=headers)
+
+            async def replay_stream() -> AsyncIterator[dict[str, str]]:
+                yield _encode(
+                    StreamEventType.META,
+                    {
+                        "session_id": replay.session_id,
+                        "in_reply_to": replay.in_reply_to,
+                        "capability_id": replay.capability_id,
+                        "wap_version": WAP_VERSION,
+                        "idempotent_replay": True,
+                    },
+                )
+                if replay.structured_data:
+                    yield _encode(StreamEventType.DATA, replay.structured_data)
+                for token in _split_tokens(replay.content):
+                    yield _encode(StreamEventType.TOKEN, {"text": token})
+                yield _encode(StreamEventType.MESSAGE, replay.model_dump(mode="json"))
+
+            return EventSourceResponse(
+                replay_stream(), headers={HEADER_VERSION: WAP_VERSION, "Cache-Control": "no-store", **headers}
+            )
+
+        ctx = turn.ctx
+        assert ctx is not None
         chunks = server.dispatch(ctx).__aiter__()
 
         # Pull the first chunk before committing to a status code, so that
@@ -253,6 +264,8 @@ def build_router(server: WAPServer) -> APIRouter:
         except StopAsyncIteration:
             exhausted = True
         except WAPProtocolError as exc:
+            await turn.fail(exc)
+            await turn.close()
             return error_response(server, exc, headers)
 
         if not wants_stream:
@@ -270,56 +283,58 @@ def build_router(server: WAPServer) -> APIRouter:
                     collect(first)  # type: ignore[arg-type]
                     async for chunk in chunks:
                         collect(chunk)
+                reply = await turn.complete("".join(text), data or None)
             except WAPProtocolError as exc:
+                await turn.fail(exc)
                 return error_response(server, exc, headers)
-            reply = server.reply(ctx.message, "".join(text), data or None)
-            server.record_exchange(ctx.session, ctx.message, reply, f"key:{ctx.agent_key}")
+            finally:
+                await turn.close()
             return signed_json_response(server, reply.model_dump(mode="json"), headers=headers)
 
         async def event_stream() -> AsyncIterator[dict[str, str]]:
             text: list[str] = []
             data: dict[str, Any] = {}
 
-            def encode(event: StreamEventType, payload: Any) -> dict[str, str]:
-                return {"event": event.value, "data": json.dumps(payload, separators=(",", ":"), ensure_ascii=False)}
-
-            yield encode(
-                StreamEventType.META,
-                {
-                    "session_id": ctx.session_id,
-                    "in_reply_to": ctx.message.message_id,
-                    "capability_id": ctx.message.capability_id,
-                    "wap_version": WAP_VERSION,
-                },
-            )
-
             async def emit(chunk: Chunk) -> AsyncIterator[dict[str, str]]:
                 if isinstance(chunk, str):
                     text.append(chunk)
                     for token in _split_tokens(chunk):
-                        yield encode(StreamEventType.TOKEN, {"text": token})
+                        yield _encode(StreamEventType.TOKEN, {"text": token})
                 else:
                     data.update(chunk)
-                    yield encode(StreamEventType.DATA, chunk)
+                    yield _encode(StreamEventType.DATA, chunk)
 
             try:
-                if not exhausted:
-                    async for event in emit(first):  # type: ignore[arg-type]
-                        yield event
-                    async for chunk in chunks:
-                        async for event in emit(chunk):
-                            yield event
-            except WAPProtocolError as exc:
-                yield encode(
-                    StreamEventType.ERROR,
-                    ErrorResponse.build(exc.code, exc.message, details=exc.details).model_dump(
-                        mode="json", exclude_none=True
-                    ),
+                yield _encode(
+                    StreamEventType.META,
+                    {
+                        "session_id": ctx.session_id,
+                        "in_reply_to": ctx.message.message_id,
+                        "capability_id": ctx.message.capability_id,
+                        "wap_version": WAP_VERSION,
+                    },
                 )
-                return
-            reply = server.reply(ctx.message, "".join(text), data or None)
-            server.record_exchange(ctx.session, ctx.message, reply, f"key:{ctx.agent_key}")
-            yield encode(StreamEventType.MESSAGE, reply.model_dump(mode="json"))
+                try:
+                    if not exhausted:
+                        async for event in emit(first):  # type: ignore[arg-type]
+                            yield event
+                        async for chunk in chunks:
+                            async for event in emit(chunk):
+                                yield event
+                    reply = await turn.complete("".join(text), data or None)
+                except WAPProtocolError as exc:
+                    await turn.fail(exc)
+                    yield _encode(
+                        StreamEventType.ERROR,
+                        ErrorResponse.build(exc.code, exc.message, details=exc.details).model_dump(
+                            mode="json", exclude_none=True
+                        ),
+                    )
+                    return
+                yield _encode(StreamEventType.MESSAGE, reply.model_dump(mode="json"))
+            finally:
+                # Also runs if the client disconnects mid-stream (generator closed/cancelled).
+                await turn.close()
 
         return EventSourceResponse(
             event_stream(),
@@ -330,4 +345,11 @@ def build_router(server: WAPServer) -> APIRouter:
     return router
 
 
-__all__ = ["build_router", "client_ip", "error_response", "manifest_response", "signed_json_response"]
+__all__ = [
+    "HEADER_IDEMPOTENT_REPLAY",
+    "build_router",
+    "client_ip",
+    "error_response",
+    "manifest_response",
+    "signed_json_response",
+]

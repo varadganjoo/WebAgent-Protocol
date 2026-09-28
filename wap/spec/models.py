@@ -96,6 +96,8 @@ class ErrorCode(str, Enum):
     INVALID_SIGNATURE = "invalid_signature"
     AUTH_REQUIRED = "auth_required"
     FORBIDDEN = "forbidden"
+    SESSION_BUSY = "session_busy"
+    IDEMPOTENCY_CONFLICT = "idempotency_conflict"
     UNKNOWN_CAPABILITY = "unknown_capability"
     REPLAY_DETECTED = "replay_detected"
     VALIDATION_ERROR = "validation_error"
@@ -114,6 +116,8 @@ ERROR_STATUS: dict[ErrorCode, int] = {
     ErrorCode.INVALID_SIGNATURE: 401,
     ErrorCode.AUTH_REQUIRED: 401,
     ErrorCode.FORBIDDEN: 403,
+    ErrorCode.SESSION_BUSY: 409,
+    ErrorCode.IDEMPOTENCY_CONFLICT: 409,
     ErrorCode.POW_INVALID: 403,
     ErrorCode.UNKNOWN_CAPABILITY: 404,
     ErrorCode.REPLAY_DETECTED: 409,
@@ -145,6 +149,14 @@ class Capability(WAPModel):
         default=None, description="JSON Schema describing structured_data in the reply."
     )
     requires_auth: bool = False
+    effects: Literal["read", "write", "financial"] = Field(
+        default="write",
+        description=(
+            "What calling the capability does: 'read' has no side effects; 'write' changes state at the "
+            "business (holds, bookings); 'financial' moves money or creates a payment obligation. "
+            "Clients use it to decide on confirmation, retries and idempotency keys."
+        ),
+    )
     streaming: bool = Field(default=False, description="Whether the action streams tokens natively.")
 
     @field_validator("id")
@@ -261,6 +273,12 @@ class AgentMessage(WAPModel):
     capability_id: str | None = None
     structured_data: dict[str, Any] | None = None
     in_reply_to: str | None = None
+    idempotency_key: str | None = Field(
+        default=None,
+        min_length=8,
+        max_length=128,
+        description="Client-chosen key; a retry with the same key returns the original result instead of re-running.",
+    )
     timestamp: float = Field(default_factory=_now)
     pow_seed: str | None = None
     pow_nonce: str | None = Field(default=None, max_length=128)

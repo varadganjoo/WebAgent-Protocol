@@ -209,18 +209,18 @@ class TestAdversarial:
     async def test_pow_gives_up_after_max_attempts(self, make_server) -> None:
         server: WAPServer = make_server(domain=BAKERY, require_pow=True)
         server.action(name="ping")(lambda: "pong")
-        original = server.pow.verify
+        original = server.pow.check
 
-        def always_reject(seed, nonce, now=None, *, consume=True):
+        def always_reject(seed, nonce, now=None, *, min_difficulty=None):
             from wap.spec.pow import PowExpired
 
             raise PowExpired("challenge has expired")
 
-        server.pow.verify = always_reject  # type: ignore[method-assign]
+        server.pow.check = always_reject  # type: ignore[method-assign]
         async with client_for(server.create_app(), max_pow_attempts=2) as client:
             with pytest.raises(ProofOfWorkFailed):
                 await client.invoke(BAKERY, "ping")
-        server.pow.verify = original  # type: ignore[method-assign]
+        server.pow.check = original  # type: ignore[method-assign]
 
     async def test_rate_limited_is_typed(self, keypair) -> None:
         _, app, _ = create_bakery(

@@ -263,7 +263,8 @@ class TestInteraction:
             second = (await post(http, signed(signer, content="again"))).json()
         assert first["content"] == "turn 1: hello (history=0)"
         assert second["content"] == "turn 2: again (history=2)"
-        assert len(server.sessions.get(f"session-{signer.public_key[:12]}").history) == 4
+        session = await server.sessions.get(f"session-{signer.public_key[:12]}")
+        assert len(session.history) == 4
 
 
 class TestErrors:

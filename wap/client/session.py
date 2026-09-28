@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 import json
 import time
 import uuid
 from collections import OrderedDict
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 from httpx_sse import EventSource
@@ -31,6 +33,7 @@ from ..spec.models import (
     WAP_VERSION,
     AgentManifest,
     AgentMessage,
+    Capability,
     Challenge,
     Role,
     StreamEventType,
@@ -40,6 +43,7 @@ from ..spec.pow import solve_async
 from .exceptions import (
     AuthRequired,
     CapabilityNotFound,
+    ConfirmationDeclined,
     ConversationLimitReached,
     ConversationStopped,
     LoopDetected,
@@ -62,6 +66,28 @@ class StreamEvent:
     message: AgentMessage | None = None
     request: AgentMessage | None = field(default=None, repr=False)
     """For ``MESSAGE`` events: the signed request this reply answers."""
+
+
+@dataclass(frozen=True)
+class ConfirmationRequest:
+    """Passed to a client's ``confirm`` hook before an action with side effects."""
+
+    domain: str
+    business_name: str
+    capability: Capability
+    payload: dict[str, Any]
+
+    @property
+    def effects(self) -> str:
+        return self.capability.effects
+
+    def summary(self) -> str:
+        args = ", ".join(f"{k}={v!r}" for k, v in self.payload.items())
+        return f"{self.business_name} ({self.domain}): {self.capability.name}({args}) [{self.effects}]"
+
+
+ConfirmHook = Callable[[ConfirmationRequest], bool | Awaitable[bool]]
+_TRANSIENT_STATUS = frozenset({502, 503, 504})
 
 
 @dataclass
@@ -143,7 +169,11 @@ class WAPClient:
         validate_payloads: bool = True,
         max_pow_attempts: int = 3,
         user_agent: str | None = None,
-        conversation_policy: ConversationPolicy | None = None,
+        conversation_policy: ConversationPolicy | Literal[False] | None = None,
+        confirm: ConfirmHook | None = None,
+        confirm_effects: frozenset[str] | set[str] = frozenset({"write", "financial"}),
+        max_retries: int = 2,
+        retry_backoff: float = 0.25,
     ) -> None:
         self.signer = agent_key if isinstance(agent_key, Signer) else Signer(agent_key)
         self.http = httpx.AsyncClient(
@@ -170,7 +200,13 @@ class WAPClient:
         self.max_pow_attempts = max(1, max_pow_attempts)
         # Loop protection for the user's side: refuse to send a request that would
         # continue a loop, before any network call or proof-of-work.
-        self.conversation_policy = conversation_policy or ConversationPolicy(max_turns=50)
+        self.conversation_policy: ConversationPolicy | None = (
+            None if conversation_policy is False else (conversation_policy or ConversationPolicy(max_turns=50))
+        )
+        self.confirm = confirm
+        self.confirm_effects = frozenset(confirm_effects)
+        self.max_retries = max(0, max_retries)
+        self.retry_backoff = retry_backoff
         self._session_guards: OrderedDict[tuple[str, str], ConversationGuard] = OrderedDict()
         self._domain_guards: dict[str, ConversationGuard] = {}
 
@@ -207,6 +243,8 @@ class WAPClient:
 
     def conversation_guards(self, domain: str, session_id: str) -> list[ConversationGuard]:
         """The per-session guard and the per-domain (cross-session) guard for a conversation."""
+        if self.conversation_policy is None:
+            return []
         key = (domain, session_id)
         guard = self._session_guards.get(key)
         if guard is None:
@@ -216,16 +254,7 @@ class WAPClient:
         self._session_guards.move_to_end(key)
         domain_guard = self._domain_guards.get(domain)
         if domain_guard is None:
-            policy = self.conversation_policy
-            domain_guard = self._domain_guards[domain] = ConversationGuard(
-                ConversationPolicy(
-                    max_turns=2**31,
-                    max_repeats=policy.max_repeats_across_sessions,
-                    max_identical_requests=policy.max_repeats_across_sessions,
-                    max_cycle_length=policy.max_cycle_length,
-                    window_seconds=policy.window_seconds,
-                )
-            )
+            domain_guard = self._domain_guards[domain] = ConversationGuard(self.conversation_policy.across_sessions())
         return [guard, domain_guard]
 
     @staticmethod
@@ -249,16 +278,24 @@ class WAPClient:
         session_id: str | None = None,
         auth_token: str | None = None,
         stream: bool = True,
+        idempotency_key: str | None = None,
     ) -> AsyncIterator[StreamEvent]:
         """Send one turn to ``domain`` and yield reply events as they arrive.
 
         The final event is always ``StreamEventType.MESSAGE`` carrying the
         business agent's signed :class:`AgentMessage`, already verified against
         the manifest's public key.
+
+        Capabilities that are not read-only get an automatic ``idempotency_key``
+        (unless one is given), so the transient-failure retries below can never
+        perform the action twice. If a ``confirm`` hook is configured it is called
+        before any capability whose ``effects`` are in ``confirm_effects``.
         """
         manifest = await self.discover(domain)
+        capability = None
         if capability_id is not None:
-            if manifest.get_capability(capability_id) is None:
+            capability = manifest.get_capability(capability_id)
+            if capability is None:
                 raise CapabilityNotFound(manifest.domain, capability_id, [c.id for c in manifest.capabilities])
             if self.validate_payloads:
                 validate_payload(manifest, capability_id, payload or {})
@@ -273,11 +310,31 @@ class WAPClient:
                 guard.check(request_fp)
             except ConversationLimitError as exc:
                 raise self._stopped(exc) from None
+
+        effects = capability.effects if capability is not None else None
+        if capability is not None and self.confirm is not None and effects in self.confirm_effects:
+            approval = self.confirm(
+                ConfirmationRequest(
+                    domain=manifest.domain,
+                    business_name=manifest.name,
+                    capability=capability,
+                    payload=dict(payload or {}),
+                )
+            )
+            if inspect.isawaitable(approval):
+                approval = await approval
+            if not approval:
+                raise ConfirmationDeclined(manifest.domain, capability.id)
+        if idempotency_key is None and capability is not None and effects != "read":
+            idempotency_key = "auto-" + uuid.uuid4().hex
+        # Free-text intents may trigger actions, so they are only retried with an idempotency key.
+        retryable = effects == "read" or idempotency_key is not None
+
         token = auth_token or self.auth_tokens.get(manifest.domain)
         challenge: Challenge | None = None
-        attempts = 0
+        pow_attempts = 0
+        transient_attempts = 0
         while True:
-            attempts += 1
             if challenge is None and manifest.pow_required:
                 challenge = await self.fetch_challenge(manifest)
             pow_seed = pow_nonce = None
@@ -290,22 +347,39 @@ class WAPClient:
                     content=intent,
                     capability_id=capability_id,
                     structured_data=payload,
+                    idempotency_key=idempotency_key,
                     pow_seed=pow_seed,
                     pow_nonce=pow_nonce,
                     public_key=self.signer.public_key,
                 )
             )
+            yielded = False
             try:
                 async for event in self._send(manifest, request, token=token, stream=stream):
                     if event.type is StreamEventType.MESSAGE and event.message is not None:
                         reply_fp = reply_fingerprint(event.message.content, event.message.structured_data)
                         for guard in guards:
                             guard.record(request_fp, reply_fp)
+                    yielded = True
                     yield event
                 return
-            except ProtocolError as exc:
+            except (httpx.TransportError, ProtocolError) as exc:
+                transient = isinstance(exc, httpx.TransportError) or (
+                    exc.status_code in _TRANSIENT_STATUS
+                    or exc.code in ("session_busy",)
+                    or (exc.code == "idempotency_conflict" and exc.retry_after is not None)
+                )
+                if transient and retryable and not yielded and transient_attempts < self.max_retries:
+                    transient_attempts += 1
+                    delay = getattr(exc, "retry_after", None) or self.retry_backoff * 2 ** (transient_attempts - 1)
+                    await asyncio.sleep(min(delay, 30.0))
+                    challenge = None  # the previous seed may already be spent
+                    continue
+                if isinstance(exc, httpx.TransportError):
+                    raise ProtocolError("network_error", f"could not reach {manifest.domain}: {exc!s}") from exc
                 retry_challenge = exc.details.get("challenge") if exc.code in ("pow_required", "pow_invalid") else None
-                if retry_challenge is None or attempts >= self.max_pow_attempts:
+                pow_attempts += 1
+                if retry_challenge is None or pow_attempts >= self.max_pow_attempts:
                     # An error is an answer too: resending a request that keeps failing is a loop.
                     error_fp = reply_fingerprint(f"error:{exc.code}:{exc.message}", exc.details)
                     for guard in guards:
@@ -327,12 +401,20 @@ class WAPClient:
         session_id: str | None = None,
         auth_token: str | None = None,
         stream: bool = True,
+        idempotency_key: str | None = None,
     ) -> InteractionResult:
         """Like :meth:`query` but collects the stream into an :class:`InteractionResult`."""
         started = time.perf_counter()
         events: list[StreamEvent] = []
         async for event in self.query(
-            domain, intent, capability_id, payload, session_id=session_id, auth_token=auth_token, stream=stream
+            domain,
+            intent,
+            capability_id,
+            payload,
+            session_id=session_id,
+            auth_token=auth_token,
+            stream=stream,
+            idempotency_key=idempotency_key,
         ):
             events.append(event)
         last = events[-1]
@@ -361,10 +443,18 @@ class WAPClient:
         intent: str = "",
         session_id: str | None = None,
         auth_token: str | None = None,
+        idempotency_key: str | None = None,
     ) -> InteractionResult:
         """Execute a specific capability with structured input (non-streaming)."""
         return await self.ask(
-            domain, intent, capability_id, payload or {}, session_id=session_id, auth_token=auth_token, stream=False
+            domain,
+            intent,
+            capability_id,
+            payload or {},
+            session_id=session_id,
+            auth_token=auth_token,
+            stream=False,
+            idempotency_key=idempotency_key,
         )
 
     # ------------------------------------------------------------------ transport

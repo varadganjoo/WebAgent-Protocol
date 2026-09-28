@@ -37,8 +37,8 @@ from mcp.shared.exceptions import MCPError
 
 from .. import __version__
 from ..spec.models import WAP_VERSION, WELL_KNOWN_PATH, AgentMessage, ErrorCode, Role, authority_host
-from ..spec.pow import PowError
-from .app import ActionContext, WAPProtocolError
+from .admission import AdmissionRequest
+from .app import WAPProtocolError
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -50,11 +50,31 @@ META_PREFIX = "io.webagent/"
 META_SIGNED_REPLY = META_PREFIX + "signed_reply"
 META_SESSION_ID = META_PREFIX + "session_id"
 META_POW = META_PREFIX + "pow"
+META_IDEMPOTENCY_KEY = META_PREFIX + "idempotency_key"
 META_CHALLENGE = META_PREFIX + "challenge"
 META_ERROR = META_PREFIX + "error"
 META_MANIFEST = META_PREFIX + "manifest_url"
 MCP_SESSION_OWNER = "mcp"
 INVALID_PARAMS = -32602
+
+
+def _protocol_error_result(exc: WAPProtocolError) -> types.CallToolResult:
+    extra: dict[str, Any] = {}
+    details = dict(exc.details or {})
+    challenge = details.pop("challenge", None)
+    if challenge is not None:
+        extra[META_CHALLENGE] = challenge
+    if details:
+        extra[META_PREFIX + "details"] = details
+    if exc.retry_after is not None:
+        extra[META_PREFIX + "retry_after"] = exc.retry_after
+    message = exc.message
+    if exc.code is ErrorCode.POW_REQUIRED:
+        message = (
+            f"this tool requires proof-of-work: solve _meta['{META_CHALLENGE}'] and resend with "
+            f"_meta['{META_POW}'] = {{'seed': ..., 'nonce': ...}}"
+        )
+    return _error_result(exc.code.value, message, extra)
 
 
 def _error_result(code: str, message: str, extra_meta: dict[str, Any] | None = None) -> types.CallToolResult:
@@ -132,82 +152,77 @@ class MCPEndpoint:
         ip = request.client.host if request is not None and getattr(request, "client", None) else None
         headers = request.headers if request is not None else {}
         meta: dict[str, Any] = dict(params.meta or {})
-
-        decision = await server.rate_limiter.check(ip=ip)
-        if not decision.allowed:
-            return _error_result(
-                ErrorCode.RATE_LIMITED.value,
-                f"rate limit exceeded; retry in {decision.retry_after:.1f}s",
-                {META_PREFIX + "retry_after": round(decision.retry_after, 3)},
-            )
-
-        if self.require_pow:
-            solution = meta.get(META_POW)
-            fresh = {META_CHALLENGE: server.pow.issue().model_dump(mode="json")}
-            if not isinstance(solution, dict) or "seed" not in solution or "nonce" not in solution:
-                return _error_result(
-                    ErrorCode.POW_REQUIRED.value,
-                    f"this tool requires proof-of-work: solve _meta['{META_CHALLENGE}'] and resend with "
-                    f"_meta['{META_POW}'] = {{'seed': ..., 'nonce': ...}}",
-                    fresh,
-                )
-            try:
-                server.pow.verify(str(solution["seed"]), str(solution["nonce"]))
-            except PowError as exc:
-                return _error_result(ErrorCode.POW_INVALID.value, f"proof-of-work rejected: {exc}", fresh)
+        solution = meta.get(META_POW) if isinstance(meta.get(META_POW), dict) else {}
 
         try:
+            await server.limit_ip(ip)
             principal = await server.authenticate(headers.get("authorization"))
+            decision, _ = await server.admit(
+                AdmissionRequest(
+                    client_ip=ip,
+                    agent_key=None,
+                    principal=principal,
+                    capability_id=params.name,
+                    transport="mcp",
+                    headers=dict(headers),
+                ),
+                pow_seed=str(solution["seed"]) if "seed" in solution else None,
+                pow_nonce=str(solution["nonce"]) if "nonce" in solution else None,
+            )
         except WAPProtocolError as exc:
-            return _error_result(exc.code.value, exc.message)
+            return _protocol_error_result(exc)
 
         session_id = str(meta.get(META_SESSION_ID) or "mcp-" + uuid.uuid4().hex)
-        try:
-            session = server.sessions.get_or_create(session_id, MCP_SESSION_OWNER)
-        except WAPProtocolError as exc:
-            return _error_result(exc.code.value, exc.message)
+        idempotency_key = meta.get(META_IDEMPOTENCY_KEY)
         message = AgentMessage(
             session_id=session_id,
             role=Role.USER_AGENT,
             capability_id=params.name,
             structured_data=dict(params.arguments or {}),
+            idempotency_key=str(idempotency_key) if idempotency_key else None,
+        )
+        # Per-session loop guard only: an IP may be shared by many unrelated MCP users.
+        turn = server.open_turn(
+            message,
+            owner_key=MCP_SESSION_OWNER,
+            principal_key=None,
+            client_ip=ip,
+            principal=principal,
+            tier=decision.tier,
         )
         try:
-            # Per-session only: an IP may be shared by many unrelated MCP users.
-            server.check_conversation(session, message, None)
-        except WAPProtocolError as exc:
-            return _error_result(exc.code.value, exc.message, {META_PREFIX + "details": exc.details})
-        action_ctx = ActionContext(
-            server=server, message=message, session=session, client_ip=ip, agent_key=None, principal=principal
-        )
-        text: list[str] = []
-        data: dict[str, Any] = {}
-        try:
-            async for chunk in server.run_capability(params.name, message.structured_data or {}, action_ctx):
+            await turn.open()
+            if turn.replay is not None:
+                return self._result(turn.replay, session_id, replayed=True)
+            assert turn.ctx is not None
+            text: list[str] = []
+            data: dict[str, Any] = {}
+            async for chunk in server.dispatch(turn.ctx):
                 if isinstance(chunk, str):
                     text.append(chunk)
                 else:
                     data.update(chunk)
+            reply = await turn.complete("".join(text), data or None)
         except WAPProtocolError as exc:
-            extra = {META_PREFIX + "details": exc.details} if exc.details else None
-            return _error_result(exc.code.value, exc.message, extra)
-        except Exception as exc:  # noqa: BLE001 - surfaced to the model as a tool error
-            return _error_result(ErrorCode.ACTION_FAILED.value, f"the business agent failed: {exc}")
+            await turn.fail(exc)
+            return _protocol_error_result(exc)
+        finally:
+            await turn.close()
+        return self._result(reply, session_id)
 
-        reply = server.reply(message, "".join(text), data or None)
-        server.record_exchange(session, message, reply, None)
+    def _result(self, reply: AgentMessage, session_id: str, *, replayed: bool = False) -> types.CallToolResult:
+        data = reply.structured_data or {}
         content = [types.TextContent(type="text", text=reply.content or json.dumps(data))]
         if data and reply.content:
             content.append(types.TextContent(type="text", text=json.dumps(data, ensure_ascii=False)))
-        return types.CallToolResult(
-            content=content,
-            structured_content=data or None,
-            meta={
-                META_SIGNED_REPLY: reply.model_dump(mode="json"),
-                META_SESSION_ID: session_id,
-                META_MANIFEST: server.base_url + WELL_KNOWN_PATH,
-            },
-        )
+        meta = {
+            META_SIGNED_REPLY: reply.model_dump(mode="json"),
+            META_SESSION_ID: session_id,
+            META_MANIFEST: self.wap.base_url + WELL_KNOWN_PATH,
+        }
+        if replayed:
+            meta[META_PREFIX + "idempotent_replay"] = True
+        return types.CallToolResult(content=content, structured_content=data or None, meta=meta)
 
     # ------------------------------------------------------------------ ASGI
 
@@ -271,6 +286,7 @@ def mount_mcp(app: FastAPI, server: WAPServer, path: str = "/mcp") -> MCPEndpoin
 __all__ = [
     "EXTENSION_ID",
     "META_CHALLENGE",
+    "META_IDEMPOTENCY_KEY",
     "META_POW",
     "META_SESSION_ID",
     "META_SIGNED_REPLY",

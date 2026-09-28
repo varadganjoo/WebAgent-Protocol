@@ -184,6 +184,18 @@ class Signer:
     def sign_model(self, model: SignedModelT) -> SignedModelT:
         return sign_model(model, self._key)
 
+    def derive_secret(self, purpose: str, length: int = 32) -> bytes:
+        """Derive a symmetric secret bound to this key (HKDF-SHA256), e.g. for proof-of-work HMACs.
+
+        Every worker holding the same private key derives the same secret, so no extra
+        secret has to be distributed across a deployment.
+        """
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+
+        seed = bytes.fromhex(self.export_private_key())
+        return HKDF(algorithm=hashes.SHA256(), length=length, salt=None, info=purpose.encode()).derive(seed)
+
 
 __all__ = [
     "KeyFormatError",

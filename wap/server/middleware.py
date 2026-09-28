@@ -14,7 +14,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from ..spec.crypto import canonical_json
-from ..spec.models import HEADER_SIGNATURE, HEADER_VERSION, WAP_VERSION, WELL_KNOWN_PATH, ErrorCode, ErrorResponse
+from ..spec.models import HEADER_SIGNATURE, HEADER_VERSION, WAP_VERSION, WELL_KNOWN_PATH, ErrorResponse
+from .app import WAPProtocolError
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -57,23 +58,20 @@ class WAPDiscoveryMiddleware:
     async def _serve_manifest(self, scope: Scope, send: Any, head: bool) -> None:
         client = scope.get("client")
         ip = client[0] if client else None
-        decision = await self.server.rate_limiter.check(ip=ip)
-        if not decision.allowed:
+        try:
+            await self.server.limit_ip(ip)
+        except WAPProtocolError as exc:
             body = canonical_json(
-                ErrorResponse.build(
-                    ErrorCode.RATE_LIMITED, "rate limit exceeded", retry_after=decision.retry_after
-                ).model_dump(mode="json", exclude_none=True)
+                ErrorResponse.build(exc.code, exc.message, retry_after=exc.retry_after).model_dump(
+                    mode="json", exclude_none=True
+                )
             )
-            await self._send(
-                send,
-                429,
-                body,
-                {
-                    "Content-Type": "application/json",
-                    **decision.headers(),
-                    HEADER_SIGNATURE: self.server.signer.sign(body),
-                },
-            )
+            headers = {
+                "Content-Type": "application/json",
+                **exc.headers,
+                HEADER_SIGNATURE: self.server.signer.sign(body),
+            }
+            await self._send(send, 429, body, headers)
             return
         manifest = self.server.manifest()
         body = canonical_json(manifest.model_dump(mode="json"))

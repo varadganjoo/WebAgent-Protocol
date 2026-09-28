@@ -84,6 +84,15 @@ class AuthRequired(ProtocolError):
     """The capability requires a bearer token that was missing or rejected."""
 
 
+class ConfirmationDeclined(WAPError):
+    """The client's ``confirm`` hook declined an action with side effects; nothing was sent."""
+
+    def __init__(self, domain: str, capability_id: str) -> None:
+        super().__init__(f"{domain}: the user declined {capability_id!r}; nothing was sent")
+        self.domain = domain
+        self.capability_id = capability_id
+
+
 class ConversationStopped(ProtocolError):
     """The conversation was halted to prevent an agent-to-agent loop.
 
@@ -104,6 +113,7 @@ class ConversationLimitReached(ConversationStopped):
 __all__ = [
     "AuthRequired",
     "CapabilityNotFound",
+    "ConfirmationDeclined",
     "ConversationLimitReached",
     "ConversationStopped",
     "InsecureTransport",
