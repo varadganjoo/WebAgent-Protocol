@@ -89,6 +89,24 @@ def is_local_authority(authority: str) -> bool:
     return host == "localhost" or host.endswith(".localhost") or host.startswith("127.")
 
 
+def _check_ijson(value: Any, path: str = "structured_data") -> None:
+    """I-JSON (RFC 7493): numbers must be exact IEEE-754 doubles so every language signs the same bytes."""
+    if isinstance(value, bool):
+        return
+    if isinstance(value, int):
+        if abs(value) > 2**53:
+            raise ValueError(f"{path}: integer {value} exceeds ±2**53; send it as a string")
+    elif isinstance(value, float):
+        if value != value or value in (float("inf"), float("-inf")):
+            raise ValueError(f"{path}: NaN and infinities are not allowed")
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            _check_ijson(item, f"{path}.{key}")
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            _check_ijson(item, f"{path}[{index}]")
+
+
 class Role(str, Enum):
     USER_AGENT = "user_agent"
     BUSINESS_AGENT = "business_agent"
@@ -341,6 +359,13 @@ class AgentMessage(WAPModel):
         value = value.lower()
         if value and (len(value) != 128 or not _HEX_RE.match(value)):
             raise ValueError("signature must be 128 hex characters")
+        return value
+
+    @field_validator("structured_data")
+    @classmethod
+    def _check_interoperable_numbers(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        if value is not None:
+            _check_ijson(value)
         return value
 
     @model_validator(mode="after")

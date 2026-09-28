@@ -139,7 +139,11 @@ def verify_model(model: BaseModel, public_key: Ed25519PublicKey | str) -> bool:
     signature = getattr(model, "signature", "")
     if not signature:
         return False
-    return verify_bytes(public_key, signing_payload(model), signature)
+    try:
+        payload = signing_payload(model)
+    except ValueError:  # not canonicalisable, so it cannot carry a valid signature
+        return False
+    return verify_bytes(public_key, payload, signature)
 
 
 class Signer:

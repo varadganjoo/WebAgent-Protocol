@@ -445,10 +445,25 @@ def create_bakery(
     return wap, app, inv
 
 
+def _store_from_env() -> StateStore | None:
+    """``BAKERY_REDIS_URL=redis://...`` shares limits and sessions between workers (``--workers N``)."""
+    url = os.environ.get("BAKERY_REDIS_URL")
+    if not url:
+        return None
+    from wap.storage import RedisStore
+
+    return RedisStore.from_url(url, prefix=os.environ.get("BAKERY_REDIS_PREFIX", "bakery:"))
+
+
 wap, app, inventory = create_bakery(
     domain=os.environ.get("BAKERY_DOMAIN", "localhost:8000"),
     private_key=os.environ.get("WAP_PRIVATE_KEY") or None,
     pow_difficulty=int(os.environ.get("BAKERY_POW_DIFFICULTY", "4")),
+    rate_limit=RateLimitPolicy(
+        requests_per_minute=int(os.environ.get("BAKERY_RATE_LIMIT_RPM", "120")),
+        burst=int(os.environ.get("BAKERY_RATE_LIMIT_BURST", "30")),
+    ),
+    store=_store_from_env(),
 )
 
 
