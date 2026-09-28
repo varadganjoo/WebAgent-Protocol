@@ -1,10 +1,10 @@
 # WebAgent Protocol
 
-[![CI](https://github.com/varadganjoo/WebAgent-Protocol/actions/workflows/ci.yml/badge.svg)](https://github.com/varadganjoo/WebAgent-Protocol/actions/workflows/ci.yml)
+[![CI](https://github.com/varadganjoo/WebAgent-Protocol/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/varadganjoo/WebAgent-Protocol/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/webagent-protocol.svg)](https://pypi.org/project/webagent-protocol/)
-[![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue.svg)](pyproject.toml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![MCP extension](https://img.shields.io/badge/MCP-extension%20io.webagent%2Fwap-8A2BE2.svg)](docs/mcp_extension.md)
+[![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue.svg)](https://github.com/varadganjoo/WebAgent-Protocol/blob/main/pyproject.toml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/varadganjoo/WebAgent-Protocol/blob/main/LICENSE)
+[![MCP extension](https://img.shields.io/badge/MCP-extension%20io.webagent%2Fwap-8A2BE2.svg)](https://github.com/varadganjoo/WebAgent-Protocol/blob/main/docs/mcp_extension.md)
 
 **An open MCP extension for the open web. AI agents can discover, verify, and safely use the tools
 that any website publishes, starting from nothing but its domain name.**
@@ -25,7 +25,7 @@ Free and open source (MIT). Python 3.11+. It's a library: you install it and bui
 strict every protection is and where the state lives.
 
 <p align="center">
-  <img src="docs/assets/shopper_demo.svg" alt="A shopper agent discovers a bakery's agent, verifies its signature, solves a proof-of-work challenge, negotiates a bulk price over three rounds and receives a signed reservation token" width="760">
+  <img src="https://raw.githubusercontent.com/varadganjoo/WebAgent-Protocol/main/docs/assets/shopper_demo.svg" alt="A shopper agent discovers a bakery's agent, verifies its signature, solves a proof-of-work challenge, negotiates a bulk price over three rounds and receives a signed reservation token" width="760">
 </p>
 
 ## One function, three ways in
@@ -67,7 +67,7 @@ WAP adds what an open-web setting needs and an installed-server setting can assu
 - **Bounded dialogues.** Conversations between agents are guaranteed to end.
 
 The full proposal, written as an MCP Specification Enhancement Proposal, is in
-[`docs/mcp_extension.md`](docs/mcp_extension.md).
+[`docs/mcp_extension.md`](https://github.com/varadganjoo/WebAgent-Protocol/blob/main/docs/mcp_extension.md).
 
 ## Built for real deployments
 
@@ -81,11 +81,11 @@ Everything is configurable, and you bring your own infrastructure:
 | **Retries without double-booking** | Idempotency keys, which the client adds automatically for anything that isn't read-only. A lost response is retried safely. |
 | **Humans stay in control** | Each action declares `effects` (`read`, `write`, `financial`). Your agent asks the user before side effects (a `confirm` hook, or MCP elicitation in the bridge), and free-text requests can't trigger actions without that confirmation. |
 | **Tool-poisoning defences** | Site-written descriptions are sanitised and labelled before a model sees them. Domain allow and block lists; private networks blocked by default in the bridge. |
-| **Interoperable signatures** | RFC 8785 canonical JSON, with [test vectors](docs/test-vectors.json) that an independent Node.js verifier checks in CI. |
+| **Interoperable signatures** | RFC 8785 canonical JSON, with [test vectors](https://github.com/varadganjoo/WebAgent-Protocol/blob/main/docs/test-vectors.json) that an independent Node.js verifier checks in CI. |
 | **Key management** | Key rotation that pinned clients follow automatically, optional trust-on-first-use, optional DNS TXT anchoring. |
-| **Operations** | Observer hooks with logging and metrics helpers, a [deployment guide](docs/deployment.md), and a real multi-worker [load test](examples/load_test.py). |
+| **Operations** | Observer hooks with logging and metrics helpers, a [deployment guide](https://github.com/varadganjoo/WebAgent-Protocol/blob/main/docs/deployment.md), and a real multi-worker [load test](https://github.com/varadganjoo/WebAgent-Protocol/blob/main/examples/load_test.py). |
 
-See [`docs/configuration.md`](docs/configuration.md) for every setting.
+See [`docs/configuration.md`](https://github.com/varadganjoo/WebAgent-Protocol/blob/main/docs/configuration.md) for every setting.
 
 ## Quickstart
 
@@ -109,7 +109,7 @@ wap inspect localhost:8000            # the verified manifest and tool schemas
 wap ask localhost:8000 "hold 2 almond croissants for Ada"
 ```
 
-To watch a language model do the shopping instead, run [`examples/llm_agent.py`](examples/llm_agent.py). It
+To watch a language model do the shopping instead, run [`examples/llm_agent.py`](https://github.com/varadganjoo/WebAgent-Protocol/blob/main/examples/llm_agent.py). It
 needs `pip install "webagent-protocol[mcp]" openai python-dotenv` and `OPENAI_API_KEY` (optionally `OPENAI_LLM`)
 in a `.env` file. The model discovers the bakery, gets its capabilities as tools, negotiates, and asks you
 before it reserves anything:
@@ -153,7 +153,7 @@ The bridge's safety settings all have safe defaults and can be changed through e
 - how instruction-like site text is handled;
 - key pinning and auth tokens.
 
-The full list is in [`docs/configuration.md`](docs/configuration.md#mcp-bridge-wap-mcp).
+The full list is in [`docs/configuration.md`](https://github.com/varadganjoo/WebAgent-Protocol/blob/main/docs/configuration.md#mcp-bridge-wap-mcp).
 
 ### Use it from Python
 
@@ -219,11 +219,11 @@ How each side enforces it:
   `conversation_limit` (429).
 - **The user's side** stops itself before sending, and counts error replies as replies.
 - **In Claude or Cursor**, the model receives a tool error telling it to *stop, summarize, and report back to
-  the user*. In our [evaluation](docs/evidence/agent-eval/summary.md), a model told to keep repeating a
+  the user*. In our [evaluation](https://github.com/varadganjoo/WebAgent-Protocol/blob/main/docs/evidence/agent-eval/summary.md), a model told to keep repeating a
   lowball offer was stopped on its 6th call in 5 of 5 runs, and the business never received more than five
   of its requests, even when the model ignored the stop instruction and kept trying.
 
-All limits can be tuned with `ConversationPolicy`. The algorithm is in [spec §12.2](docs/spec_rfc.md).
+All limits can be tuned with `ConversationPolicy`. The algorithm is in [spec §12.2](https://github.com/varadganjoo/WebAgent-Protocol/blob/main/docs/spec_rfc.md).
 
 ## Architecture
 
@@ -283,19 +283,19 @@ wap/
 
 | | |
 |---|---|
-| [`docs/configuration.md`](docs/configuration.md) | Every setting for servers, clients and the bridge |
-| [`docs/deployment.md`](docs/deployment.md) | Keys, Redis and workers, proxies, capacity, monitoring |
-| [`docs/spec_rfc.md`](docs/spec_rfc.md) | WAP/1.0 specification: headers, errors, state machines, security |
-| [`docs/test-vectors.json`](docs/test-vectors.json) | Fixed keys, documents, canonical bytes and signatures for other implementations |
-| [`docs/mcp_extension.md`](docs/mcp_extension.md) | The MCP extension proposal (`io.webagent/wap`) |
-| [`docs/whitepaper.md`](docs/whitepaper.md) | *Beyond Scraping*: motivation, design, and an evaluation with a real model |
-| [`docs/evidence/`](docs/evidence/README.md) | Every measurement behind the whitepaper, with agent transcripts and how to reproduce them |
-| [`CHANGELOG.md`](CHANGELOG.md) · [`CONTRIBUTING.md`](CONTRIBUTING.md) · [`SECURITY.md`](SECURITY.md) | Project docs |
+| [`docs/configuration.md`](https://github.com/varadganjoo/WebAgent-Protocol/blob/main/docs/configuration.md) | Every setting for servers, clients and the bridge |
+| [`docs/deployment.md`](https://github.com/varadganjoo/WebAgent-Protocol/blob/main/docs/deployment.md) | Keys, Redis and workers, proxies, capacity, monitoring |
+| [`docs/spec_rfc.md`](https://github.com/varadganjoo/WebAgent-Protocol/blob/main/docs/spec_rfc.md) | WAP/1.0 specification: headers, errors, state machines, security |
+| [`docs/test-vectors.json`](https://github.com/varadganjoo/WebAgent-Protocol/blob/main/docs/test-vectors.json) | Fixed keys, documents, canonical bytes and signatures for other implementations |
+| [`docs/mcp_extension.md`](https://github.com/varadganjoo/WebAgent-Protocol/blob/main/docs/mcp_extension.md) | The MCP extension proposal (`io.webagent/wap`) |
+| [`docs/whitepaper.md`](https://github.com/varadganjoo/WebAgent-Protocol/blob/main/docs/whitepaper.md) | *Beyond Scraping*: motivation, design, and an evaluation with a real model |
+| [`docs/evidence/`](https://github.com/varadganjoo/WebAgent-Protocol/blob/main/docs/evidence/README.md) | Every measurement behind the whitepaper, with agent transcripts and how to reproduce them |
+| [`CHANGELOG.md`](https://github.com/varadganjoo/WebAgent-Protocol/blob/main/CHANGELOG.md) · [`CONTRIBUTING.md`](https://github.com/varadganjoo/WebAgent-Protocol/blob/main/CONTRIBUTING.md) · [`SECURITY.md`](https://github.com/varadganjoo/WebAgent-Protocol/blob/main/SECURITY.md) | Project docs |
 
 ## What we measured
 
 We ran a real model (`gpt-6-luna`) against a live bakery server in Docker, with nothing mocked
-([results](docs/evidence/agent-eval/summary.md), [method](docs/evidence/README.md)):
+([results](https://github.com/varadganjoo/WebAgent-Protocol/blob/main/docs/evidence/agent-eval/summary.md), [method](https://github.com/varadganjoo/WebAgent-Protocol/blob/main/docs/evidence/README.md)):
 
 | | Result |
 |---|---|
@@ -306,7 +306,7 @@ We ran a real model (`gpt-6-luna`) against a live bakery server in Docker, with 
 | Throughput, 4 workers + Redis | about **600 signed, proof-of-work-gated requests/s** on a laptop, replays accepted exactly once |
 
 Tokens are not WAP's main argument: on a small page a text scraper is cheaper for a read-only question.
-The difference is that the WAP agent can act, safely. The [whitepaper](docs/whitepaper.md#6-evaluation) has
+The difference is that the WAP agent can act, safely. The [whitepaper](https://github.com/varadganjoo/WebAgent-Protocol/blob/main/docs/whitepaper.md#6-evaluation) has
 the details and limitations; `docker build -f evals/Dockerfile -t wap-eval .` reproduces everything.
 
 ## Development
@@ -326,7 +326,7 @@ The suite covers:
   descriptions, lost responses and double-booking, and looping agents.
 
 `python examples/load_test.py --workers 4 --redis-url redis://...` runs a real multi-process load test. Contributions are welcome; see
-[CONTRIBUTING.md](CONTRIBUTING.md).
+[CONTRIBUTING.md](https://github.com/varadganjoo/WebAgent-Protocol/blob/main/CONTRIBUTING.md).
 
 ## License
 
