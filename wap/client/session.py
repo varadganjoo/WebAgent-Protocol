@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import time
 import uuid
+from collections import OrderedDict
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any
@@ -16,6 +17,13 @@ from jsonschema.exceptions import SchemaError
 from pydantic import ValidationError
 
 from .. import __version__
+from ..spec.conversation import (
+    ConversationGuard,
+    ConversationLimitError,
+    ConversationPolicy,
+    reply_fingerprint,
+    request_fingerprint,
+)
 from ..spec.crypto import Signer, verify_bytes, verify_model
 from ..spec.models import (
     HEADER_SIGNATURE,
@@ -32,6 +40,9 @@ from ..spec.pow import solve_async
 from .exceptions import (
     AuthRequired,
     CapabilityNotFound,
+    ConversationLimitReached,
+    ConversationStopped,
+    LoopDetected,
     ProofOfWorkFailed,
     ProtocolError,
     RateLimited,
@@ -132,6 +143,7 @@ class WAPClient:
         validate_payloads: bool = True,
         max_pow_attempts: int = 3,
         user_agent: str | None = None,
+        conversation_policy: ConversationPolicy | None = None,
     ) -> None:
         self.signer = agent_key if isinstance(agent_key, Signer) else Signer(agent_key)
         self.http = httpx.AsyncClient(
@@ -156,6 +168,11 @@ class WAPClient:
         self.allow_insecure = allow_insecure
         self.validate_payloads = validate_payloads
         self.max_pow_attempts = max(1, max_pow_attempts)
+        # Loop protection for the user's side: refuse to send a request that would
+        # continue a loop, before any network call or proof-of-work.
+        self.conversation_policy = conversation_policy or ConversationPolicy(max_turns=50)
+        self._session_guards: OrderedDict[tuple[str, str], ConversationGuard] = OrderedDict()
+        self._domain_guards: dict[str, ConversationGuard] = {}
 
     async def __aenter__(self) -> WAPClient:
         return self
@@ -185,6 +202,36 @@ class WAPClient:
             return Challenge.model_validate(body)
         except ValidationError as exc:
             raise ProtocolError("invalid_request", f"malformed challenge from {manifest.domain}: {exc}") from exc
+
+    # ------------------------------------------------------------------ loop protection
+
+    def conversation_guards(self, domain: str, session_id: str) -> list[ConversationGuard]:
+        """The per-session guard and the per-domain (cross-session) guard for a conversation."""
+        key = (domain, session_id)
+        guard = self._session_guards.get(key)
+        if guard is None:
+            guard = self._session_guards[key] = ConversationGuard(self.conversation_policy)
+            while len(self._session_guards) > 1_000:
+                self._session_guards.popitem(last=False)
+        self._session_guards.move_to_end(key)
+        domain_guard = self._domain_guards.get(domain)
+        if domain_guard is None:
+            policy = self.conversation_policy
+            domain_guard = self._domain_guards[domain] = ConversationGuard(
+                ConversationPolicy(
+                    max_turns=2**31,
+                    max_repeats=policy.max_repeats_across_sessions,
+                    max_identical_requests=policy.max_repeats_across_sessions,
+                    max_cycle_length=policy.max_cycle_length,
+                    window_seconds=policy.window_seconds,
+                )
+            )
+        return [guard, domain_guard]
+
+    @staticmethod
+    def _stopped(exc: ConversationLimitError) -> ConversationStopped:
+        cls = LoopDetected if exc.reason == "loop_detected" else ConversationLimitReached
+        return cls(exc.reason, f"stopped locally: {exc.message}", details=exc.details)
 
     # ------------------------------------------------------------------ interaction
 
@@ -219,6 +266,13 @@ class WAPClient:
             raise ValueError("either an intent or a capability_id is required")
 
         session_id = session_id or uuid.uuid4().hex
+        request_fp = request_fingerprint(capability_id, payload, intent)
+        guards = self.conversation_guards(manifest.domain, session_id)
+        for guard in guards:
+            try:
+                guard.check(request_fp)
+            except ConversationLimitError as exc:
+                raise self._stopped(exc) from None
         token = auth_token or self.auth_tokens.get(manifest.domain)
         challenge: Challenge | None = None
         attempts = 0
@@ -243,11 +297,19 @@ class WAPClient:
             )
             try:
                 async for event in self._send(manifest, request, token=token, stream=stream):
+                    if event.type is StreamEventType.MESSAGE and event.message is not None:
+                        reply_fp = reply_fingerprint(event.message.content, event.message.structured_data)
+                        for guard in guards:
+                            guard.record(request_fp, reply_fp)
                     yield event
                 return
             except ProtocolError as exc:
                 retry_challenge = exc.details.get("challenge") if exc.code in ("pow_required", "pow_invalid") else None
                 if retry_challenge is None or attempts >= self.max_pow_attempts:
+                    # An error is an answer too: resending a request that keeps failing is a loop.
+                    error_fp = reply_fingerprint(f"error:{exc.code}:{exc.message}", exc.details)
+                    for guard in guards:
+                        guard.record(request_fp, error_fp)
                     if exc.code in ("pow_required", "pow_invalid"):
                         raise ProofOfWorkFailed(
                             exc.code, exc.message, status_code=exc.status_code, details=exc.details
@@ -325,6 +387,10 @@ class WAPClient:
             raise RateLimited(code, message, **kwargs)
         if code == "auth_required":
             raise AuthRequired(code, message, **kwargs)
+        if code == "loop_detected":
+            raise LoopDetected(code, message, **kwargs)
+        if code == "conversation_limit":
+            raise ConversationLimitReached(code, message, **kwargs)
         raise ProtocolError(code, message, **kwargs)
 
     def _verify_body(self, manifest: AgentManifest, body: bytes, headers: httpx.Headers) -> Any:

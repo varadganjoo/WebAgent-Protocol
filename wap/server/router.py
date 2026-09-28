@@ -198,6 +198,7 @@ async def _admit(server: WAPServer, request: Request) -> tuple[ActionContext, di
 
     principal = await server.authenticate(request.headers.get("authorization"))
     session = server.sessions.get_or_create(message.session_id, message.public_key)
+    server.check_conversation(session, message, f"key:{message.public_key}")
     ctx = ActionContext(
         server=server,
         message=message,
@@ -272,7 +273,7 @@ def build_router(server: WAPServer) -> APIRouter:
             except WAPProtocolError as exc:
                 return error_response(server, exc, headers)
             reply = server.reply(ctx.message, "".join(text), data or None)
-            server.sessions.record(ctx.session, ctx.message, reply)
+            server.record_exchange(ctx.session, ctx.message, reply, f"key:{ctx.agent_key}")
             return signed_json_response(server, reply.model_dump(mode="json"), headers=headers)
 
         async def event_stream() -> AsyncIterator[dict[str, str]]:
@@ -317,7 +318,7 @@ def build_router(server: WAPServer) -> APIRouter:
                 )
                 return
             reply = server.reply(ctx.message, "".join(text), data or None)
-            server.sessions.record(ctx.session, ctx.message, reply)
+            server.record_exchange(ctx.session, ctx.message, reply, f"key:{ctx.agent_key}")
             yield encode(StreamEventType.MESSAGE, reply.model_dump(mode="json"))
 
         return EventSourceResponse(

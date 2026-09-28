@@ -252,7 +252,9 @@ def create_bakery(
             pastry = inv.find(item)
             negotiations: dict[str, Any] = ctx.state.setdefault("negotiations", {})
             thread = negotiations.setdefault(pastry.name, {"round": 0, "last_counter": pastry.unit_price})
-            thread["round"] += 1
+            # After the final offer the answer no longer changes, so a stuck counterpart sees
+            # an identical reply (and loop protection can stop it) instead of an ever-growing round.
+            thread["round"] = min(thread["round"] + 1, MAX_NEGOTIATION_ROUNDS)
             rnd = thread["round"]
             floor = round(pastry.unit_price * (1 - bulk_discount(quantity)), 2)
             remaining = max(0, MAX_NEGOTIATION_ROUNDS - rnd)

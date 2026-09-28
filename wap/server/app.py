@@ -25,11 +25,21 @@ import sys
 import time
 from collections import OrderedDict
 from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, get_type_hints
 
+from jsonschema import Draft202012Validator
+from jsonschema.exceptions import SchemaError
 from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError, create_model
 
+from ..spec.conversation import (
+    ConversationGuard,
+    ConversationLimitError,
+    ConversationPolicy,
+    reply_fingerprint,
+    request_fingerprint,
+)
 from ..spec.crypto import Signer
 from ..spec.models import (
     CHALLENGE_PATH,
@@ -90,12 +100,20 @@ class SessionState:
     last_seen: float = field(default_factory=time.time)
     history: list[AgentMessage] = field(default_factory=list)
     state: dict[str, Any] = field(default_factory=dict)
+    guard: ConversationGuard | None = None
 
 
 class SessionStore:
     """Bounded LRU store of dialogue sessions bound to the agent key that opened them."""
 
-    def __init__(self, max_sessions: int = 10_000, ttl_seconds: float = 3600.0, max_history: int = 100) -> None:
+    def __init__(
+        self,
+        max_sessions: int = 10_000,
+        ttl_seconds: float = 3600.0,
+        max_history: int = 100,
+        conversation_policy: ConversationPolicy | None = None,
+    ) -> None:
+        self.conversation_policy = conversation_policy
         self.max_sessions = max_sessions
         self.ttl_seconds = ttl_seconds
         self.max_history = max_history
@@ -109,6 +127,8 @@ class SessionStore:
             session = None
         if session is None:
             session = SessionState(session_id=session_id, owner_key=owner_key)
+            if self.conversation_policy is not None:
+                session.guard = ConversationGuard(self.conversation_policy)
             self._sessions[session_id] = session
             while len(self._sessions) > self.max_sessions:
                 self._sessions.popitem(last=False)
@@ -119,6 +139,13 @@ class SessionStore:
         return session
 
     def record(self, session: SessionState, *messages: AgentMessage) -> None:
+        """Append messages to the session history and feed completed exchanges to its loop guard."""
+        if session.guard is not None:
+            for request, reply in zip(messages[::2], messages[1::2], strict=False):
+                session.guard.record(
+                    request_fingerprint(request.capability_id, request.structured_data, request.content),
+                    reply_fingerprint(reply.content, reply.structured_data),
+                )
         session.history.extend(messages)
         if len(session.history) > self.max_history:
             del session.history[: len(session.history) - self.max_history]
@@ -198,13 +225,24 @@ class _InputBase(BaseModel):
 
 @dataclass
 class RegisteredAction:
+    """A capability plus the callable that implements it.
+
+    Two flavours exist: *typed* actions built from a Python signature (validated
+    with a generated Pydantic model and called with keyword arguments), and *raw*
+    actions registered with an explicit JSON Schema (validated with
+    ``jsonschema`` and called as ``func(payload, ctx)``), used e.g. to re-publish
+    tools from an existing MCP server.
+    """
+
     func: Callable[..., Any]
     capability: Capability
-    input_model: type[BaseModel]
+    input_model: type[BaseModel] | None
     context_param: str | None
     model_param: str | None
 
     async def call(self, payload: dict[str, Any], ctx: ActionContext) -> Any:
+        if self.input_model is None:
+            return await self._call_raw(payload, ctx)
         try:
             validated = self.input_model.model_validate(payload)
         except ValidationError as exc:
@@ -227,6 +265,23 @@ class RegisteredAction:
             return self.func(**kwargs)
         # Plain synchronous callables may block (database drivers, SDK calls): run off-loop.
         return await asyncio.to_thread(self.func, **kwargs)
+
+    async def _call_raw(self, payload: dict[str, Any], ctx: ActionContext) -> Any:
+        validator = Draft202012Validator(self.capability.input_schema)
+        errors = sorted(validator.iter_errors(payload), key=lambda e: list(e.absolute_path))
+        if errors:
+            raise WAPProtocolError(
+                ErrorCode.VALIDATION_ERROR,
+                f"structured_data does not match the input schema of {self.capability.id!r}",
+                details={
+                    "errors": [
+                        {"loc": list(e.absolute_path), "msg": e.message, "type": str(e.validator)} for e in errors
+                    ]
+                },
+            )
+        if inspect.iscoroutinefunction(self.func) or inspect.isasyncgenfunction(self.func):
+            return self.func(payload, ctx)
+        return await asyncio.to_thread(self.func, payload, ctx)
 
 
 def _json_schema_for(annotation: Any) -> dict[str, Any] | None:
@@ -436,6 +491,8 @@ class WAPServer:
         max_clock_skew_seconds: float = 300.0,
         auth_handler: AuthHandler | None = None,
         trust_forwarded_for: bool = False,
+        mcp_require_pow: bool | None = None,
+        conversation_policy: ConversationPolicy | None = None,
     ) -> None:
         self.name = name
         self.domain = normalize_authority(domain)
@@ -457,8 +514,17 @@ class WAPServer:
         self.max_clock_skew_seconds = max_clock_skew_seconds
         self.auth_handler = auth_handler
         self.trust_forwarded_for = trust_forwarded_for
+        # None: the MCP endpoint inherits require_pow. False lets generic MCP clients (which cannot
+        # solve challenges) call tools, relying on rate limits alone.
+        self.mcp_require_pow = mcp_require_pow
+        self.mcp_path: str | None = None
+        self._mcp_sources: list[Any] = []
         self.actions: dict[str, RegisteredAction] = {}
-        self.sessions = SessionStore()
+        # Loop protection is on by default; pass ConversationPolicy(max_turns=..., ...) to tune it.
+        self.conversation_policy = conversation_policy or ConversationPolicy()
+        self.sessions = SessionStore(conversation_policy=self.conversation_policy)
+        # Per-principal guards catch loops that hop across fresh session ids.
+        self._principal_guards: OrderedDict[str, ConversationGuard] = OrderedDict()
         self.replay_cache = ReplayCache(window_seconds=max_clock_skew_seconds)
         self._intent_handler: Callable[[str, ActionContext], Any] = KeywordIntentRouter()
         self._manifest: AgentManifest | None = None
@@ -500,6 +566,40 @@ class WAPServer:
 
         return decorator
 
+    def add_capability(self, capability: Capability, handler: Callable[[dict[str, Any], ActionContext], Any]) -> None:
+        """Register a capability with an explicit JSON Schema and a ``handler(payload, ctx)`` callable."""
+        if capability.id in self.actions:
+            raise ValueError(f"capability {capability.id!r} is already registered")
+        if capability.requires_auth and self.auth_handler is None:
+            raise ValueError(f"capability {capability.id!r} requires auth but WAPServer has no auth_handler")
+        try:
+            Draft202012Validator.check_schema(capability.input_schema)
+        except SchemaError as exc:
+            raise ValueError(f"capability {capability.id!r} has an invalid input_schema: {exc.message}") from exc
+        self.actions[capability.id] = RegisteredAction(
+            func=handler, capability=capability, input_model=None, context_param=None, model_param=None
+        )
+        self._manifest = None
+
+    def include_mcp(self, source: Any, *, prefix: str = "", include: set[str] | None = None) -> None:
+        """Re-publish an existing MCP server's tools as WAP capabilities when the app starts.
+
+        ``source`` is anything ``mcp.client.client.Client`` accepts (a server object, a
+        streamable-HTTP URL, or ``StdioServerParameters``). See :mod:`wap.server.mcp_import`.
+        """
+        from .mcp_import import MCPToolSource
+
+        self._mcp_sources.append(MCPToolSource(source, prefix=prefix, include=include))
+
+    async def import_mcp(self, source: Any, *, prefix: str = "", include: set[str] | None = None) -> Any:
+        """Connect to an MCP server now and register its tools. Returns the live ``MCPToolSource``;
+        call its ``aclose()`` when done."""
+        from .mcp_import import MCPToolSource
+
+        tool_source = MCPToolSource(source, prefix=prefix, include=include)
+        await tool_source.register(self)
+        return tool_source
+
     def intent(self, func: Callable[[str, ActionContext], Any]) -> Callable[[str, ActionContext], Any]:
         """Register the handler for free-text intents (no ``capability_id``), e.g. an LLM router."""
         self._intent_handler = func
@@ -516,10 +616,12 @@ class WAPServer:
             public_key=self.public_key,
             interaction_url=self.base_url + INTERACT_PATH,
             challenge_url=self.base_url + CHALLENGE_PATH if self.require_pow else None,
+            mcp_url=self.base_url + self.mcp_path if self.mcp_path else None,
             capabilities=[a.capability for a in self.actions.values()],
             pow_required=self.require_pow,
             pow_difficulty=self.pow.difficulty if self.require_pow else None,
             rate_limit_policy=self.rate_limit_policy.model_dump(),
+            conversation_policy=self.conversation_policy.as_dict(),
             issued_at=now,
             expires_at=now + self.manifest_ttl_seconds,
         )
@@ -534,6 +636,43 @@ class WAPServer:
         return current
 
     # ------------------------------------------------------------------ dispatch
+
+    def _principal_guard(self, principal_key: str) -> ConversationGuard:
+        guard = self._principal_guards.get(principal_key)
+        if guard is None:
+            # Across sessions only repetition matters; the turn cap applies per session.
+            policy = ConversationPolicy(
+                max_turns=2**31,
+                max_repeats=self.conversation_policy.max_repeats_across_sessions,
+                max_identical_requests=self.conversation_policy.max_repeats_across_sessions,
+                max_cycle_length=self.conversation_policy.max_cycle_length,
+                window_seconds=self.conversation_policy.window_seconds,
+            )
+            guard = self._principal_guards[principal_key] = ConversationGuard(policy)
+            while len(self._principal_guards) > 10_000:
+                self._principal_guards.popitem(last=False)
+        self._principal_guards.move_to_end(principal_key)
+        return guard
+
+    def check_conversation(self, session: SessionState, message: AgentMessage, principal_key: str | None) -> None:
+        """Refuse ``message`` if it would continue a loop (raises ``WAPProtocolError``). No tool runs."""
+        request_fp = request_fingerprint(message.capability_id, message.structured_data, message.content)
+        guards = [g for g in (session.guard, self._principal_guard(principal_key) if principal_key else None) if g]
+        for guard in guards:
+            try:
+                guard.check(request_fp)
+            except ConversationLimitError as exc:
+                raise WAPProtocolError(ErrorCode(exc.reason), exc.message, details=exc.details) from exc
+
+    def record_exchange(
+        self, session: SessionState, request: AgentMessage, reply: AgentMessage, principal_key: str | None
+    ) -> None:
+        self.sessions.record(session, request, reply)
+        if principal_key:
+            self._principal_guard(principal_key).record(
+                request_fingerprint(request.capability_id, request.structured_data, request.content),
+                reply_fingerprint(reply.content, reply.structured_data),
+            )
 
     async def authenticate(self, authorization: str | None) -> Any:
         if self.auth_handler is None or not authorization:
@@ -598,19 +737,53 @@ class WAPServer:
 
     # ------------------------------------------------------------------ ASGI
 
-    def mount(self, app: FastAPI) -> FastAPI:
-        """Attach discovery, interaction and challenge endpoints to a FastAPI app."""
+    def mount(self, app: FastAPI, *, mcp: bool | None = None, mcp_path: str = "/mcp") -> FastAPI:
+        """Attach WAP endpoints to a FastAPI app, plus a standard MCP endpoint at ``mcp_path``.
+
+        ``mcp=None`` (default) enables the MCP endpoint when the ``mcp`` package is installed;
+        ``True`` requires it; ``False`` disables it.
+        """
         from .middleware import inject_routes
 
         inject_routes(app, self)
+        if self._mcp_sources and not getattr(app.state, "wap_mcp_sources", False):
+            app.state.wap_mcp_sources = True
+            original = app.router.lifespan_context
+            sources = self._mcp_sources
+
+            @asynccontextmanager
+            async def lifespan(asgi_app: Any) -> AsyncIterator[Any]:
+                try:
+                    for source in sources:
+                        await source.register(self)
+                    async with original(asgi_app) as state:
+                        yield state
+                finally:
+                    for source in sources:
+                        await source.aclose()
+
+            app.router.lifespan_context = lifespan
+        if mcp is None:
+            try:
+                import mcp as _mcp_sdk  # noqa: F401
+            except ImportError:
+                mcp = False
+            else:
+                mcp = True
+        if mcp and getattr(app.state, "wap_mcp", None) is None:
+            from .mcp_endpoint import mount_mcp
+
+            app.state.wap_mcp = mount_mcp(app, self, mcp_path)
+            self.mcp_path = mcp_path
+            self._manifest = None
         return app
 
-    def create_app(self, **fastapi_kwargs: Any) -> FastAPI:
+    def create_app(self, *, mcp: bool | None = None, **fastapi_kwargs: Any) -> FastAPI:
         """Create a standalone FastAPI application serving only this agent."""
         from fastapi import FastAPI
 
         fastapi_kwargs.setdefault("title", f"{self.name} (WAP/1.0)")
-        return self.mount(FastAPI(**fastapi_kwargs))
+        return self.mount(FastAPI(**fastapi_kwargs), mcp=mcp)
 
 
 __all__ = [

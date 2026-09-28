@@ -281,7 +281,11 @@ class ManifestResolver:
         if manifest.is_expired():
             raise VerificationFailed(expected, "manifest has expired")
         domain_host = authority_host(manifest.domain)
-        for label, url in (("interaction_url", manifest.interaction_url), ("challenge_url", manifest.challenge_url)):
+        for label, url in (
+            ("interaction_url", manifest.interaction_url),
+            ("challenge_url", manifest.challenge_url),
+            ("mcp_url", manifest.mcp_url),
+        ):
             if url is None:
                 continue
             parts = urlsplit(url)

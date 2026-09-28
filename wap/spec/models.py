@@ -102,6 +102,8 @@ class ErrorCode(str, Enum):
     POW_REQUIRED = "pow_required"
     POW_INVALID = "pow_invalid"
     RATE_LIMITED = "rate_limited"
+    LOOP_DETECTED = "loop_detected"
+    CONVERSATION_LIMIT = "conversation_limit"
     ACTION_FAILED = "action_failed"
     INTERNAL_ERROR = "internal_error"
 
@@ -118,6 +120,8 @@ ERROR_STATUS: dict[ErrorCode, int] = {
     ErrorCode.VALIDATION_ERROR: 422,
     ErrorCode.POW_REQUIRED: 428,
     ErrorCode.RATE_LIMITED: 429,
+    ErrorCode.LOOP_DETECTED: 409,
+    ErrorCode.CONVERSATION_LIMIT: 429,
     ErrorCode.ACTION_FAILED: 502,
     ErrorCode.INTERNAL_ERROR: 500,
 }
@@ -179,10 +183,16 @@ class AgentManifest(WAPModel):
     public_key: str = Field(description="Hex-encoded raw 32-byte Ed25519 public key.")
     interaction_url: str
     challenge_url: str | None = None
+    mcp_url: str | None = Field(
+        default=None, description="Optional MCP streamable-HTTP endpoint exposing the same capabilities as tools."
+    )
     capabilities: list[Capability] = Field(default_factory=list)
     pow_required: bool = False
     pow_difficulty: int | None = Field(default=None, ge=1, le=16)
     rate_limit_policy: dict[str, Any] = Field(default_factory=lambda: RateLimitPolicy().model_dump())
+    conversation_policy: dict[str, Any] | None = Field(
+        default=None, description="Loop-protection limits (max_turns, max_repeats, max_cycle_length, window_seconds)."
+    )
     issued_at: float = Field(default_factory=_now)
     expires_at: float | None = None
     signature: str = Field(default="", description="Hex Ed25519 signature over the canonical manifest.")
@@ -208,7 +218,7 @@ class AgentManifest(WAPModel):
             raise ValueError("signature must be 128 hex characters (raw Ed25519 signature)")
         return value
 
-    @field_validator("interaction_url", "challenge_url")
+    @field_validator("interaction_url", "challenge_url", "mcp_url")
     @classmethod
     def _check_url(cls, value: str | None) -> str | None:
         if value is None:

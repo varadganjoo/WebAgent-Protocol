@@ -84,10 +84,30 @@ class AuthRequired(ProtocolError):
     """The capability requires a bearer token that was missing or rejected."""
 
 
+class ConversationStopped(ProtocolError):
+    """The conversation was halted to prevent an agent-to-agent loop.
+
+    Raised either locally (``status_code is None``: the client refused to send) or
+    because the business agent refused. Do not retry the same request; change it
+    or hand control back to the user.
+    """
+
+
+class LoopDetected(ConversationStopped):
+    """The same exchange (or a short cycle of exchanges) keeps repeating with no new information."""
+
+
+class ConversationLimitReached(ConversationStopped):
+    """The session used up its turn budget."""
+
+
 __all__ = [
     "AuthRequired",
     "CapabilityNotFound",
+    "ConversationLimitReached",
+    "ConversationStopped",
     "InsecureTransport",
+    "LoopDetected",
     "ManifestNotFound",
     "ProofOfWorkFailed",
     "ProtocolError",

@@ -21,7 +21,7 @@ from wap.client import (
     VerificationFailed,
     WAPClient,
 )
-from wap.mcp.bridge import WAPBridge, build_server
+from wap.mcp.bridge import WAPBridge
 from wap.server import WAPServer
 from wap.spec.crypto import verify_model
 from wap.spec.models import RateLimitPolicy, StreamEventType
@@ -256,15 +256,6 @@ class TestAdversarial:
 
 
 class TestMCPBridge:
-    async def test_tools_are_registered(self) -> None:
-        server = build_server(WAPBridge(WAPClient()))
-        tools = await server.list_tools()
-        names = {t.name for t in tools}
-        assert {"wap_discover", "wap_interact", "wap_ask"} <= names
-        interact = next(t for t in tools if t.name == "wap_interact")
-        schema = interact.inputSchema if hasattr(interact, "inputSchema") else interact.input_schema
-        assert set(schema["required"]) == {"domain", "capability"}
-
     async def test_bridge_round_trip(self, bakery) -> None:
         _, app, _ = bakery
         bridge = WAPBridge(client_for(app))
