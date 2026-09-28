@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import json
+import sys
 from collections.abc import AsyncIterator
 
 import httpx
@@ -297,6 +299,17 @@ class TestMCPBridge:
 
 
 class TestCLI:
+    def test_output_is_utf8_even_on_a_legacy_codepage(self, monkeypatch) -> None:
+        """Windows redirects stdout with a cp1252 encoder, which cannot print the CLI's ✔ and →."""
+        streams = [io.TextIOWrapper(io.BytesIO(), encoding="cp1252") for _ in range(2)]
+        monkeypatch.setattr(sys, "stdout", streams[0])
+        monkeypatch.setattr(sys, "stderr", streams[1])
+        cli._utf8_output()
+        print("✔ →")
+        sys.stdout.flush()
+        assert streams[0].buffer.getvalue().rstrip() == "✔ →".encode()
+        assert streams[1].encoding == "utf-8"
+
     def test_keygen(self, tmp_path) -> None:
         runner = CliRunner()
         result = runner.invoke(cli.app, ["keygen", "--json"])
@@ -308,7 +321,8 @@ class TestCLI:
         result = runner.invoke(cli.app, ["keygen", "--out", str(key_file)])
         assert result.exit_code == 0
         assert len(key_file.read_text().strip()) == 64
-        assert oct(key_file.stat().st_mode & 0o777) == "0o600"
+        if sys.platform != "win32":  # chmod only sets the read-only flag on Windows
+            assert oct(key_file.stat().st_mode & 0o777) == "0o600"
         assert runner.invoke(cli.app, ["keygen", "--out", str(key_file)]).exit_code == 1
 
     def test_ask_inspect_verify(self, bakery, monkeypatch: pytest.MonkeyPatch) -> None:

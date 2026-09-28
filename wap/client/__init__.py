@@ -3,6 +3,7 @@
 from .exceptions import (
     AuthRequired,
     CapabilityNotFound,
+    ConfirmationDeclined,
     ConversationLimitReached,
     ConversationStopped,
     InsecureTransport,
@@ -16,11 +17,13 @@ from .exceptions import (
     WAPError,
 )
 from .resolver import ManifestResolver, ResolvedManifest, Target, parse_target
-from .session import InteractionResult, StreamEvent, WAPClient, WAPSession, validate_payload
+from .session import ConfirmationRequest, InteractionResult, StreamEvent, WAPClient, WAPSession, validate_payload
 
 __all__ = [
     "AuthRequired",
     "CapabilityNotFound",
+    "ConfirmationDeclined",
+    "ConfirmationRequest",
     "ConversationLimitReached",
     "ConversationStopped",
     "InsecureTransport",

@@ -32,18 +32,19 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Internet :: WWW/HTTP",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Security :: Cryptography",
     "Typing :: Typed",
 ]
 dependencies = [
-    "pydantic>=2.6",
+    "pydantic>=2.12",
     "httpx[http2]>=0.27",
     "httpx-sse>=0.4",
     "cryptography>=42",
     "jsonschema>=4.21",
-    "typer>=0.12",
+    "typer>=0.15",
     "rich>=13.7",
 ]
 
@@ -52,7 +53,7 @@ dependencies = [
 server = [
     "fastapi>=0.110",
     "uvicorn[standard]>=0.29",
-    "sse-starlette>=2.0",
+    "sse-starlette>=3.0",
     "mcp>=2,<3",
 ]
 # User side: the wap-mcp bridge for Claude, Cursor, Codex and other MCP hosts.
@@ -72,11 +73,11 @@ all = [
 ]
 dev = [
     "webagent-protocol[server,mcp,redis]",
-    "pytest>=8",
-    "hypothesis>=6.100",
-    "pytest-asyncio>=0.23",
-    "ruff>=0.6",
-    "build>=1.2",
+    "pytest>=9",
+    "hypothesis>=6.140",
+    "pytest-asyncio>=1.2",
+    "ruff>=0.15",
+    "build>=1.3",
 ]
 
 [project.scripts]
@@ -111,8 +112,7 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP"]
-ignore = ["B008", "UP007", "UP042", "UP045"]
+ignore = []
 
 [tool.ruff.lint.per-file-ignores]
-"wap/cli/main.py" = ["UP006"]
 "examples/benchmark.py" = ["E501"]  # embedded HTML fixture

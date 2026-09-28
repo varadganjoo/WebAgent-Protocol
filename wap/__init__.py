@@ -14,6 +14,7 @@ the Model Context Protocol bridge in :mod:`wap.mcp` (``pip install "webagent-pro
 __version__ = "0.2.0"
 
 from .client import (
+    ConfirmationRequest,
     InteractionResult,
     ManifestResolver,
     StreamEvent,
@@ -22,12 +23,14 @@ from .client import (
 )
 from .client.exceptions import (
     CapabilityNotFound,
+    ConfirmationDeclined,
     ConversationLimitReached,
     ConversationStopped,
     LoopDetected,
     ManifestNotFound,
     ProtocolError,
     RateLimited,
+    SchemaValidationError,
     VerificationFailed,
     WAPError,
 )
@@ -50,6 +53,8 @@ __all__ = [
     "Capability",
     "CapabilityNotFound",
     "Challenge",
+    "ConfirmationDeclined",
+    "ConfirmationRequest",
     "ConversationLimitReached",
     "ConversationPolicy",
     "ConversationStopped",
@@ -59,6 +64,7 @@ __all__ = [
     "ManifestResolver",
     "ProtocolError",
     "RateLimited",
+    "SchemaValidationError",
     "Signer",
     "StreamEvent",
     "VerificationFailed",

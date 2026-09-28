@@ -31,7 +31,7 @@ OPENING_OFFER = 3.60
 
 async def run(domain: str) -> str:
     async with WAPClient() as client:
-        # 1. Discovery: GET /.well-known/agent.json, verify Ed25519 signature and domain binding.
+        # 1. Discovery: GET /.well-known/wap.json, verify Ed25519 signature and domain binding.
         manifest = await client.discover(domain)
         console.rule(f"[bold]{manifest.name}")
         console.print(
@@ -105,6 +105,7 @@ async def run(domain: str) -> str:
 
 
 def main() -> None:
+    sys.stdout.reconfigure(encoding="utf-8")  # the demo prints ✔ and → (Windows defaults to a legacy codepage)
     domain = sys.argv[1] if len(sys.argv) > 1 else "localhost:8000"
     asyncio.run(run(domain))
 

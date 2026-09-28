@@ -18,7 +18,7 @@ import stat
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Annotated, Any
 
 import typer
 from rich.console import Console
@@ -50,11 +50,24 @@ def _version_callback(value: bool) -> None:
         raise typer.Exit()
 
 
+def _utf8_output() -> None:
+    """Write UTF-8 even where the locale says otherwise (e.g. Windows with output redirected to a file)."""
+    for stream in (sys.stdout, sys.stderr):
+        if (getattr(stream, "encoding", None) or "").lower().replace("-", "") != "utf8":
+            try:
+                stream.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
+            except (AttributeError, ValueError):
+                pass  # not a TextIOWrapper (e.g. a test runner's capture); leave it alone
+
+
 @app.callback()
 def _root(
-    version: bool = typer.Option(False, "--version", callback=_version_callback, is_eager=True, help="Show version."),
+    version: Annotated[
+        bool, typer.Option("--version", callback=_version_callback, is_eager=True, help="Show version.")
+    ] = False,
 ) -> None:
     """WebAgent Protocol CLI."""
+    _utf8_output()
 
 
 def _client(insecure: bool, pin: list[str] | None, token: str | None, domain: str | None, timeout: float) -> WAPClient:
@@ -128,19 +141,25 @@ def _manifest_table(manifest: AgentManifest) -> Table:
 
 @app.command()
 def ask(
-    domain: str = typer.Argument(..., help="Domain or URL, e.g. bakery.example or localhost:8000."),
-    query: str = typer.Argument("", help="Free-text request for the business agent."),
-    capability: Optional[str] = typer.Option(None, "--capability", "-c", help="Invoke a specific capability id."),
-    data: Optional[str] = typer.Option(None, "--data", "-d", help="JSON payload (or @file.json) for the capability."),
-    session: Optional[str] = typer.Option(None, "--session", "-s", help="Continue an existing session id."),
-    token: Optional[str] = typer.Option(
-        None, "--token", envvar="WAP_TOKEN", help="Bearer token for auth-gated capabilities."
-    ),
-    no_stream: bool = typer.Option(False, "--no-stream", help="Request a single JSON reply instead of SSE."),
-    as_json: bool = typer.Option(False, "--json", help="Print the verified result as JSON only."),
-    insecure: bool = typer.Option(False, "--insecure", help="Allow plain HTTP for non-loopback hosts."),
-    pin: Optional[list[str]] = typer.Option(None, "--pin", help="Pin a key: domain=<hex public key>. Repeatable."),
-    timeout: float = typer.Option(30.0, "--timeout", help="Request timeout in seconds."),
+    domain: Annotated[str, typer.Argument(help="Domain or URL, e.g. bakery.example or localhost:8000.")],
+    query: Annotated[str, typer.Argument(help="Free-text request for the business agent.")] = "",
+    capability: Annotated[
+        str | None, typer.Option("--capability", "-c", help="Invoke a specific capability id.")
+    ] = None,
+    data: Annotated[
+        str | None, typer.Option("--data", "-d", help="JSON payload (or @file.json) for the capability.")
+    ] = None,
+    session: Annotated[str | None, typer.Option("--session", "-s", help="Continue an existing session id.")] = None,
+    token: Annotated[
+        str | None, typer.Option("--token", envvar="WAP_TOKEN", help="Bearer token for auth-gated capabilities.")
+    ] = None,
+    no_stream: Annotated[bool, typer.Option("--no-stream", help="Request a single JSON reply instead of SSE.")] = False,
+    as_json: Annotated[bool, typer.Option("--json", help="Print the verified result as JSON only.")] = False,
+    insecure: Annotated[bool, typer.Option("--insecure", help="Allow plain HTTP for non-loopback hosts.")] = False,
+    pin: Annotated[
+        list[str] | None, typer.Option("--pin", help="Pin a key: domain=<hex public key>. Repeatable.")
+    ] = None,
+    timeout: Annotated[float, typer.Option("--timeout", help="Request timeout in seconds.")] = 30.0,
 ) -> None:
     """Send a single query to a domain's business agent and show the signed reply."""
     payload = _parse_data(data)
@@ -205,12 +224,12 @@ def ask(
 
 @app.command()
 def inspect(
-    domain: str = typer.Argument(..., help="Domain or URL to inspect."),
-    raw: bool = typer.Option(False, "--raw", help="Print the raw manifest JSON."),
-    insecure: bool = typer.Option(False, "--insecure", help="Allow plain HTTP for non-loopback hosts."),
-    timeout: float = typer.Option(30.0, "--timeout"),
+    domain: Annotated[str, typer.Argument(help="Domain or URL to inspect.")],
+    raw: Annotated[bool, typer.Option("--raw", help="Print the raw manifest JSON.")] = False,
+    insecure: Annotated[bool, typer.Option("--insecure", help="Allow plain HTTP for non-loopback hosts.")] = False,
+    timeout: Annotated[float, typer.Option("--timeout", help="Request timeout in seconds.")] = 30.0,
 ) -> None:
-    """Pretty-print the discovered agent.json manifest and capability schemas."""
+    """Pretty-print a site's verified wap.json manifest and capability schemas."""
 
     async def run() -> None:
         async with _client(insecure, None, None, None, timeout) as client:
@@ -247,12 +266,12 @@ def inspect(
 
 @app.command()
 def verify(
-    domain: str = typer.Argument(..., help="Domain or URL to verify."),
-    expect_key: Optional[str] = typer.Option(
-        None, "--expect-key", help="Fail unless the manifest uses this public key."
-    ),
-    insecure: bool = typer.Option(False, "--insecure", help="Allow plain HTTP for non-loopback hosts."),
-    timeout: float = typer.Option(30.0, "--timeout"),
+    domain: Annotated[str, typer.Argument(help="Domain or URL to verify.")],
+    expect_key: Annotated[
+        str | None, typer.Option("--expect-key", help="Fail unless the manifest uses this public key.")
+    ] = None,
+    insecure: Annotated[bool, typer.Option("--insecure", help="Allow plain HTTP for non-loopback hosts.")] = False,
+    timeout: Annotated[float, typer.Option("--timeout", help="Request timeout in seconds.")] = 30.0,
 ) -> None:
     """Fetch a manifest and report each authenticity check."""
 
@@ -285,8 +304,10 @@ def verify(
 
 @app.command()
 def keygen(
-    out: Optional[Path] = typer.Option(None, "--out", "-o", help="Write the private key to this file (mode 0600)."),
-    as_json: bool = typer.Option(False, "--json", help="Emit the key pair as JSON."),
+    out: Annotated[
+        Path | None, typer.Option("--out", "-o", help="Write the private key to this file (mode 0600).")
+    ] = None,
+    as_json: Annotated[bool, typer.Option("--json", help="Emit the key pair as JSON.")] = False,
 ) -> None:
     """Generate an Ed25519 key pair for signing a business manifest."""
     pair = generate_keypair()
@@ -324,11 +345,11 @@ def keygen(
 
 @app.command()
 def serve(
-    target: str = typer.Argument(..., help="ASGI application import path, e.g. examples.bakery_server:app"),
-    host: str = typer.Option("127.0.0.1", "--host"),
-    port: int = typer.Option(8000, "--port"),
-    reload: bool = typer.Option(False, "--reload", help="Reload on code changes (development)."),
-    app_dir: Path = typer.Option(Path("."), "--app-dir", help="Directory added to sys.path before import."),
+    target: Annotated[str, typer.Argument(help="ASGI application import path, e.g. examples.bakery_server:app")],
+    host: Annotated[str, typer.Option("--host", help="Interface to bind.")] = "127.0.0.1",
+    port: Annotated[int, typer.Option("--port", help="Port to bind.")] = 8000,
+    reload: Annotated[bool, typer.Option("--reload", help="Reload on code changes (development).")] = False,
+    app_dir: Annotated[Path, typer.Option("--app-dir", help="Directory added to sys.path before import.")] = Path("."),
 ) -> None:
     """Run a WAP-enabled ASGI application with uvicorn."""
     try:

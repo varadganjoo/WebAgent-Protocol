@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/varadganjoo/WebAgent-Protocol/actions/workflows/ci.yml/badge.svg)](https://github.com/varadganjoo/WebAgent-Protocol/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/webagent-protocol.svg)](https://pypi.org/project/webagent-protocol/)
-[![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue.svg)](pyproject.toml)
+[![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue.svg)](pyproject.toml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![MCP extension](https://img.shields.io/badge/MCP-extension%20io.webagent%2Fwap-8A2BE2.svg)](docs/mcp_extension.md)
 
@@ -107,6 +107,15 @@ python examples/bakery_server.py      # a bakery agent on http://localhost:8000
 python examples/shopper_agent.py      # discovers it, negotiates, reserves (screenshot above)
 wap inspect localhost:8000            # the verified manifest and tool schemas
 wap ask localhost:8000 "hold 2 almond croissants for Ada"
+```
+
+To watch a language model do the shopping instead, run [`examples/llm_agent.py`](examples/llm_agent.py). It
+needs `pip install "webagent-protocol[mcp]" openai python-dotenv` and `OPENAI_API_KEY` (optionally `OPENAI_LLM`)
+in a `.env` file. The model discovers the bakery, gets its capabilities as tools, negotiates, and asks you
+before it reserves anything:
+
+```bash
+python examples/llm_agent.py "Buy 12 sourdough croissants for Ada at the best price you can get"
 ```
 
 ### Use it from Claude, Cursor, or Codex

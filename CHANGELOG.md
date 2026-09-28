@@ -35,6 +35,10 @@ effects, and interoperable signatures. See [docs/configuration.md](docs/configur
 - `wap.server.observability`: `LoggingObserver`, `MetricsObserver`, `combine`.
 - `examples/load_test.py` (multi-process, real HTTP), property-based fuzz tests, `docs/configuration.md`,
   `docs/deployment.md`.
+- `examples/llm_agent.py`: an OpenAI model (Responses API) discovers a site and uses its capabilities as
+  tools, with user confirmation before side effects.
+- `ConfirmationRequest`, `ConfirmationDeclined` and `SchemaValidationError` are exported from `wap`.
+- Python 3.14 support; CI runs Linux on 3.11–3.14 plus Windows and macOS.
 
 ### Changed
 - Discovery moves to `/.well-known/wap.json`. `/.well-known/agent.json` is still served and tried by
@@ -45,10 +49,18 @@ effects, and interoperable signatures. See [docs/configuration.md](docs/configur
   before dispatch.
 - The client no longer retries a business's `action_failed` (502); only gateway errors without a WAP body
   are treated as transient.
+- Minimum versions raised to the oldest ones the suite passes on: `pydantic>=2.12`, `typer>=0.15`,
+  `sse-starlette>=3.0`; dev tools `pytest>=9`, `pytest-asyncio>=1.2`.
+- `Role`, `ErrorCode` and `StreamEventType` are `StrEnum`s, so `str()` and f-strings give the plain value.
+- The CLI uses Typer's `Annotated` parameter style.
 
 ### Fixed
 - Integers beyond ±2^53 and non-finite numbers in `structured_data` are rejected cleanly (I-JSON)
   instead of failing signature verification (found by fuzzing).
+- Tools imported with `include_mcp` that return untyped JSON (for example `-> dict`, which has no MCP
+  output schema) now return it as `structured_data`, not only as text.
+- The test suite passes on Windows (file-mode and subprocess-encoding assumptions).
+- The `wap` CLI no longer crashes on Windows when its output is redirected (it writes UTF-8).
 
 ## [0.1.0] - 2026-09-28
 

@@ -36,7 +36,12 @@ console.log(JSON.stringify(inputs.map(canon)));
 
 def node_canonical(values: list) -> list[str]:
     result = subprocess.run(
-        [NODE, "-e", JS_CANONICALIZE], input=json.dumps(values), capture_output=True, text=True, check=True
+        [NODE, "-e", JS_CANONICALIZE],
+        input=json.dumps(values),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
     )
     return json.loads(result.stdout)
 

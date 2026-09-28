@@ -273,6 +273,10 @@ def inventory_mcp() -> MCPServer:
         levels[sku] = levels.get(sku, 0) + quantity
         return f"ordered {quantity} x {sku}"
 
+    @tools.tool(description="Supplier details (untyped dict, so no MCP output schema).")
+    def supplier(sku: str) -> dict:
+        return {"sku": sku, "supplier": "Acme Parts"}
+
     return tools
 
 
@@ -289,7 +293,7 @@ class TestImportFromMCP:
         app = server.create_app()
         async with running(app):
             manifest: AgentManifest = server.manifest()
-            assert {c.id for c in manifest.capabilities} == {"check_stock", "order-parts"}
+            assert {c.id for c in manifest.capabilities} == {"check_stock", "order-parts", "supplier"}
             stock_cap = manifest.get_capability("check_stock")
             assert stock_cap.input_schema["required"] == ["sku"]
             assert stock_cap.output_schema["properties"]["quantity"]["type"] == "integer"
@@ -297,6 +301,7 @@ class TestImportFromMCP:
                 result = await client.invoke("acme.example", "check_stock", {"sku": "W-1"})
                 ordered = await client.invoke("acme.example", "order-parts", {"sku": "W-1", "quantity": 5})
                 again = await client.invoke("acme.example", "check_stock", {"sku": "W-1"})
+                untyped = await client.invoke("acme.example", "supplier", {"sku": "W-1"})
                 with pytest.raises(ProtocolError) as failure:
                     await client.invoke("acme.example", "check_stock", {"sku": "nope"})
             # Server-side JSON Schema validation of imported tools (client-side validation switched off).
@@ -306,6 +311,7 @@ class TestImportFromMCP:
         assert result.verified and result.structured_data == {"sku": "W-1", "quantity": 7}
         assert "ordered 5 x W-1" in ordered.text
         assert again.structured_data["quantity"] == 12
+        assert untyped.structured_data == {"sku": "W-1", "supplier": "Acme Parts"}
         assert failure.value.code == "action_failed"
         assert invalid.value.code == "validation_error"
         assert invalid.value.details["errors"][0]["loc"] == ["quantity"]
@@ -326,7 +332,7 @@ class TestImportFromMCP:
         server: WAPServer = make_server(domain="acme.example")
         source = await server.import_mcp(inventory_mcp(), prefix="inv.")
         try:
-            assert source.capability_ids == ["inv.check_stock", "inv.order-parts"]
+            assert source.capability_ids == ["inv.check_stock", "inv.order-parts", "inv.supplier"]
             async with client_for(server.create_app(mcp=False)) as client:
                 result = await client.invoke("acme.example", "inv.check_stock", {"sku": "W-1"})
             assert result.structured_data["quantity"] == 7

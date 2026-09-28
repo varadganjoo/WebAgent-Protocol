@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 import time
 import uuid
-from enum import Enum
+from enum import StrEnum
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
@@ -107,12 +107,12 @@ def _check_ijson(value: Any, path: str = "structured_data") -> None:
             _check_ijson(item, f"{path}[{index}]")
 
 
-class Role(str, Enum):
+class Role(StrEnum):
     USER_AGENT = "user_agent"
     BUSINESS_AGENT = "business_agent"
 
 
-class ErrorCode(str, Enum):
+class ErrorCode(StrEnum):
     """Machine-readable error codes (see docs/spec_rfc.md, Section 9)."""
 
     INVALID_REQUEST = "invalid_request"
@@ -414,7 +414,7 @@ class ErrorResponse(WAPModel):
         return cls(error=ErrorDetail(code=code, message=message, retry_after=retry_after, details=details))
 
 
-class StreamEventType(str, Enum):
+class StreamEventType(StrEnum):
     META = "meta"
     TOKEN = "token"
     DATA = "data"

@@ -10,7 +10,7 @@ class WAPError(Exception):
 
 
 class ManifestNotFound(WAPError):
-    """No valid ``/.well-known/agent.json`` could be retrieved for a domain."""
+    """No valid ``/.well-known/wap.json`` (or legacy ``agent.json``) could be retrieved for a domain."""
 
     def __init__(self, domain: str, message: str, *, url: str | None = None, status_code: int | None = None) -> None:
         super().__init__(f"{domain}: {message}")

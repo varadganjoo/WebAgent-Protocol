@@ -22,6 +22,7 @@ Installed with the ``server`` extra.
 
 from __future__ import annotations
 
+import json
 import re
 from contextlib import AsyncExitStack
 from typing import TYPE_CHECKING, Any
@@ -107,6 +108,12 @@ class MCPToolSource:
             if result.is_error:
                 raise WAPProtocolError(ErrorCode.ACTION_FAILED, text or f"MCP tool {tool_name!r} failed")
             data = result.structured_content
+            if data is None:
+                # Tools without an output schema (e.g. ``-> dict``) return their result only as JSON text.
+                try:
+                    data = json.loads(text)
+                except ValueError:
+                    data = None
             return ActionResult(content=text, data=dict(data) if isinstance(data, dict) else None)
 
         return call
