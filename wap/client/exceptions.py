@@ -1,0 +1,98 @@
+"""Exceptions raised by the WAP consumer SDK."""
+
+from __future__ import annotations
+
+from typing import Any
+
+
+class WAPError(Exception):
+    """Base class for every error raised by :mod:`wap.client`."""
+
+
+class ManifestNotFound(WAPError):
+    """No valid ``/.well-known/agent.json`` could be retrieved for a domain."""
+
+    def __init__(self, domain: str, message: str, *, url: str | None = None, status_code: int | None = None) -> None:
+        super().__init__(f"{domain}: {message}")
+        self.domain = domain
+        self.url = url
+        self.status_code = status_code
+
+
+class VerificationFailed(WAPError):
+    """A manifest or message failed cryptographic or binding verification."""
+
+    def __init__(self, domain: str, message: str) -> None:
+        super().__init__(f"{domain}: {message}")
+        self.domain = domain
+
+
+class InsecureTransport(WAPError):
+    """Plain HTTP was requested for a non-loopback domain without ``allow_insecure``."""
+
+
+class CapabilityNotFound(WAPError):
+    """The requested capability is not declared in the remote manifest."""
+
+    def __init__(self, domain: str, capability_id: str, available: list[str]) -> None:
+        super().__init__(
+            f"{domain} does not offer capability {capability_id!r}; available: {', '.join(available) or 'none'}"
+        )
+        self.domain = domain
+        self.capability_id = capability_id
+        self.available = available
+
+
+class SchemaValidationError(WAPError):
+    """``payload`` does not satisfy the capability's declared ``input_schema``."""
+
+    def __init__(self, capability_id: str, errors: list[str]) -> None:
+        super().__init__(f"payload for {capability_id!r} is invalid: {'; '.join(errors)}")
+        self.capability_id = capability_id
+        self.errors = errors
+
+
+class ProtocolError(WAPError):
+    """The remote agent answered with a WAP error object or violated the protocol."""
+
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        status_code: int | None = None,
+        details: dict[str, Any] | None = None,
+        retry_after: float | None = None,
+    ) -> None:
+        super().__init__(f"[{code}] {message}")
+        self.code = code
+        self.message = message
+        self.status_code = status_code
+        self.details = details or {}
+        self.retry_after = retry_after
+
+
+class RateLimited(ProtocolError):
+    """HTTP 429: back off for ``retry_after`` seconds."""
+
+
+class ProofOfWorkFailed(ProtocolError):
+    """The server kept rejecting proof-of-work solutions."""
+
+
+class AuthRequired(ProtocolError):
+    """The capability requires a bearer token that was missing or rejected."""
+
+
+__all__ = [
+    "AuthRequired",
+    "CapabilityNotFound",
+    "InsecureTransport",
+    "ManifestNotFound",
+    "ProofOfWorkFailed",
+    "ProtocolError",
+    "RateLimited",
+    "SchemaValidationError",
+    "VerificationFailed",
+    "WAPError",
+]
