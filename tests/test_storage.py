@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import shutil
 import socket
 import subprocess
@@ -31,7 +32,10 @@ def _free_port() -> int:
 
 @pytest.fixture(scope="session")
 def redis_url(tmp_path_factory) -> Iterator[str]:
-    """A throwaway real redis-server (skipped when the binary is not installed)."""
+    """Use an explicit disposable test Redis, or start a local redis-server."""
+    if url := os.environ.get("WAP_TEST_REDIS_URL"):
+        yield url
+        return
     binary = shutil.which("redis-server")
     if binary is None:
         pytest.skip("redis-server not installed")

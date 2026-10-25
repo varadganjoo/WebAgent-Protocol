@@ -12,6 +12,10 @@ Updates: RFC 8615 (well-known URI usage only)
 
 ## Status of This Memo
 
+The 1.0 interaction protocol below remains unchanged. [Appendix D](#appendix-d-optional-manifest-11-discovery-extension)
+defines optional, explicitly versioned 1.1 manifest metadata and directory discovery. Strict 1.0 clients must
+upgrade to consume enriched manifests; unchanged manifests retain their existing signed representation.
+
 This document specifies an experimental protocol for the Internet community. It is
 published in the style of an IETF Internet-Draft for precision and reviewability; it
 has **not** been submitted to or adopted by the IETF, and it confers no IETF status.
@@ -1011,3 +1015,50 @@ A conforming **user agent**:
 
 The reference implementation in this repository (`wap/`) is exercised against this
 checklist by `tests/`.
+
+## Appendix D. Optional manifest 1.1 discovery extension
+
+This experimental extension is implemented in the reference library and specified in [discovery.md](discovery.md).
+It does not replace Sections 4–14. WAP/1.0 messages and transaction endpoints remain unchanged.
+
+A manifest carrying any field introduced here MUST declare `wap_version: "1.1"`. A 1.0 manifest MUST NOT carry
+these fields. Absent optional extension members MUST be omitted from the wire and canonical model dump;
+existing 1.0 defaults and signed bytes MUST remain unchanged. Canonical JSON, signatures and key-rotation
+endorsements include all present new metadata, under the existing Section 4 algorithm. No stripping/downgrading
+of signed documents is permitted. Readers MUST reject unsupported manifest versions. Updated readers accept
+1.0 and 1.1; old strict readers require an upgrade for enriched manifests. Existing signature vectors plus an
+additional 1.1 discovery manifest are in `test-vectors.json` and are independently verified in JavaScript.
+
+Capabilities MAY advertise `semantic_operation` (dot namespace ending `.vN`), `semantic_schema_version`
+(`major.minor`) and `execution` (`deterministic`, `external_service`, `agent`, `human_assisted`). Semantic schema
+versions require an operation identifier. Existing input/output schemas, constraints, requires_auth, effects
+and streaming remain authoritative; new metadata MUST NOT override them. Matching MUST use explicit operation
+and supported schema versions, never similarity of local ids/names. Unknown/custom operations MUST remain
+available through ordinary tool/schema discovery. Recognizing an operation is not proof that tool schemas are
+interchangeable; clients MUST validate actual arguments. Automatic reference-schema invocation also validates
+structured output and refuses ambiguous matches. Schema references MUST NOT trigger network/file access in
+directory/semantic discovery. Execution type is only a business claim; deterministic tools dispatch directly
+through Section 7 without a mandatory LLM. Agent-backed tools remain optional.
+
+The optional signed `discovery` object has `schema_version: "1.0"`, `category`, optional `location` (latitude,
+longitude), `service_areas` (country/region/locality/postal_code) and bounded public `attributes`. It MUST NOT
+carry customer/transaction data. Its complete reference contracts are `wap.spec.discovery` and
+`wap.directory.models` and their generated JSON Schemas.
+
+Directory protocol 1.0 uses JSON POST `/wap-directory/v1/registrations` (bare domain only) and
+`/wap-directory/v1/search` (structured category/operation/geographic/filter/version query, limit/offset).
+Registration MUST retrieve and verify the canonical signed manifest instead of accepting submitted claims.
+Search returns a bounded public projection with domain/name/canonical manifest URL, capability and semantic
+ids/schema versions, category/coverage, protocol version, digest, key fingerprint and freshness timestamps.
+Directories MUST limit indexing, requests, fetches and page sizes; protect registration admission; reject
+redirects/private targets; and minimize query retention. Implementations MUST apply outbound network controls
+against DNS rebinding; pre-connect DNS inspection alone is insufficient.
+
+Directory claims are discovery hints, not independent trust anchors. Before using a result, clients MUST
+retrieve the current manifest from its canonical business domain, apply existing verification/network/key
+policies, and repeat matching against verified metadata. Expired hints and no-longer-matching businesses are
+excluded. A directory's reported key MUST NOT silently become a client pin. Discovery MUST NOT grant tool
+execution, site approval or consent. Business transactions use Section 7 directly, with existing authentication,
+effects, confirmation, idempotency, sessions and loop protection. No central directory, ranking authority,
+commercial provider or model framework is required. Independent verification does not guarantee completeness,
+legal identity, honest metadata, policy compliance or successful business execution.

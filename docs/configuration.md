@@ -237,4 +237,20 @@ with `BridgeConfig`.
 | `WAP_MAX_DESCRIPTION_CHARS` | `1000` | Truncation length for site-written text. |
 | `WAP_MAX_TURNS` | `40` | Per-site turn budget for the model. |
 | `WAP_DOMAINS` | none | Sites to pre-load (same as command-line arguments). |
+| `WAP_DIRECTORIES` | none | Comma-separated configured directory origins; enables structured `wap_search_businesses`. Search verifies canonical manifests and preserves site/action approval. |
 | `WAP_AGENT_KEY`, `WAP_PINNED_KEYS`, `WAP_AUTH_TOKENS`, `WAP_ALLOW_INSECURE`, `WAP_TIMEOUT` | | Same as the client settings. |
+
+## Optional business discovery
+
+`WAPServer(discovery=BusinessDiscovery(...))` publishes public category, point/coverage and attributes in a
+signed 1.1 manifest. `action(semantic_operation=..., semantic_schema_version="1.0", execution="deterministic")`
+adds metadata while keeping existing schemas/effects/auth. No LLM or directory is required for known-domain
+invocation. Unchanged servers continue emitting 1.0.
+
+`WAPClient.search_businesses(query, providers, timeout=10)` requires `block_private_networks=True`; enable
+`allow_loopback=True` only in development. `invoke_operation` requires one known exact operation/schema match,
+validates schemas, and requires a `confirm` hook for semantic writes. Ordinary `invoke` retains its existing
+behavior, including opt-in SDK confirmation. The MCP bridge retains its existing confirmation defaults.
+
+See [directory provider/index/service limits, versioning and trust assumptions](discovery.md), especially the
+outbound egress control required against DNS rebinding, and [the runnable restaurant tutorial](restaurant-tutorial.md).

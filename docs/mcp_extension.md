@@ -203,6 +203,32 @@ The bridge handles signatures, proof-of-work, sessions, idempotency keys and loo
 
 ## Backward Compatibility
 
+### Optional directory and semantic discovery
+
+The experimental manifest 1.1 extension in [discovery.md](discovery.md) adds business search and optional
+capability metadata. It leaves WAP/1.0 interaction messages and ordinary MCP `tools/list` / `tools/call`
+unchanged. Existing hosts can ignore optional tool `_meta` keys:
+
+```json
+{"io.webagent/semantic_operation":"hospitality.restaurant.reservation.create.v1",
+ "io.webagent/semantic_schema_version":"1.0", "io.webagent/execution":"deterministic"}
+```
+
+The endpoint and bridge emit these only when advertised. MCP import recognizes the same optional keys and
+validates them through Capability; input/output schemas are reused. Imported execution/semantic hints never
+relax the existing conservative imported `effects="write"` policy. To publish semantics on an existing server,
+add these `_meta` fields to the source MCP tool, then use `include_mcp`/`import_mcp` as before. The resulting
+signed business manifest is 1.1 and requires an updated WAP client.
+
+`WAP_DIRECTORIES` accepts comma-separated, operator-configured provider origins. Only when providers exist,
+the bridge adds `wap_search_businesses`, taking DirectoryQuery's structured schema. It returns summaries of
+canonically verified businesses and per-provider pagination/errors. Search does not register tools or bypass
+`WAP_APPROVE_SITES`. Select a domain and call the existing `wap_discover`; execution then uses the existing
+schema validation, signatures and consent pipeline. Allow/block lists apply before candidate fetches. Provider
+URLs are never learned from untrusted search results. `WAPBridge(..., directories={name: provider})` supports
+programmatic providers. This is reference behavior; no claim is made that all hosts implement this extension
+or refresh dynamic tools identically.
+
 The extension adds no required methods and changes no existing semantics:
 
 * Clients unaware of it ignore `_meta` keys and the extension declaration.

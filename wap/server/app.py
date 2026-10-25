@@ -40,6 +40,7 @@ from ..spec.conversation import (
     request_fingerprint,
 )
 from ..spec.crypto import Signer, endorsement_payload
+from ..spec.discovery import BusinessDiscovery
 from ..spec.models import (
     CHALLENGE_PATH,
     EFFECT_RANK,
@@ -223,6 +224,9 @@ def _build_action(
     description: str | None,
     requires_auth: bool,
     effects: str = "write",
+    semantic_operation: str | None = None,
+    semantic_schema_version: str | None = None,
+    execution: str | None = None,
     localns: dict[str, Any] | None = None,
 ) -> RegisteredAction:
     signature = inspect.signature(func)
@@ -272,6 +276,9 @@ def _build_action(
         output_schema=_json_schema_for(hints.get("return", signature.return_annotation)),
         requires_auth=requires_auth,
         effects=effects,
+        semantic_operation=semantic_operation,
+        semantic_schema_version=semantic_schema_version,
+        execution=execution,
         streaming=inspect.isasyncgenfunction(func) or inspect.isgeneratorfunction(func),
     )
     return RegisteredAction(
@@ -622,10 +629,12 @@ class WAPServer:
         session_lock_wait: float = 10.0,
         idempotency_ttl_seconds: float = 86_400.0,
         observer: Observer | None = None,
+        discovery: BusinessDiscovery | None = None,
     ) -> None:
         self.name = name
         self.domain = normalize_authority(domain)
         self.description = description
+        self.discovery = discovery
         if private_key is None:
             logger.warning(
                 "WAPServer %r started without a private key; using an ephemeral key. "
@@ -708,6 +717,9 @@ class WAPServer:
         title: str | None = None,
         requires_auth: bool = False,
         effects: Literal["read", "write", "financial"] = "write",
+        semantic_operation: str | None = None,
+        semantic_schema_version: str | None = None,
+        execution: Literal["deterministic", "external_service", "agent", "human_assisted"] | None = None,
     ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
         """Register a function as a capability. ``name`` becomes the capability id.
 
@@ -731,6 +743,9 @@ class WAPServer:
                 description=description,
                 requires_auth=requires_auth,
                 effects=effects,
+                semantic_operation=semantic_operation,
+                semantic_schema_version=semantic_schema_version,
+                execution=execution,
                 localns=caller_locals,
             )
             self._manifest = None
@@ -782,9 +797,14 @@ class WAPServer:
     def build_manifest(self, now: float | None = None) -> AgentManifest:
         now = time.time() if now is None else now
         manifest = AgentManifest(
+            wap_version="1.1"
+            if self.discovery is not None
+            or any(a.capability.semantic_operation or a.capability.execution for a in self.actions.values())
+            else "1.0",
             domain=self.domain,
             name=self.name,
             description=self.description,
+            discovery=self.discovery,
             public_key=self.public_key,
             interaction_url=self.base_url + INTERACT_PATH,
             challenge_url=self.base_url + CHALLENGE_PATH if self.require_pow else None,

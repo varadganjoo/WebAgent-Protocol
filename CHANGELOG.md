@@ -5,6 +5,18 @@ All notable changes to this project are documented here. The format follows
 [Semantic Versioning](https://semver.org/). The *protocol* version (WAP/1.0) is
 versioned separately from the Python package.
 
+## Unreleased
+
+- Optional WAP/1.1 signed manifest metadata for semantic operations, semantic schema versions, execution
+  classifications and public business discovery. WAP/1.0 signatures and interaction messages are unchanged.
+- Fourteen reference operations for restaurants, retail and appointments; conservative exact matching and
+  direct `WAPClient.invoke_operation` with schema validation and fail-closed consent for semantic writes.
+- Decentralized directory provider interface, memory index, HTTP adapter, authenticated reference service,
+  canonical-manifest registration, geographic/structured search, pagination and verified client federation.
+- Optional MCP `wap_search_businesses` tool (`WAP_DIRECTORIES`), with existing domain/site consent preserved.
+  Capability metadata also survives WAP MCP exports/imports.
+- Deterministic two-restaurant example, injected clock, idempotency/ownership tests, tutorial and trust model.
+
 ## [0.2.0] - 2026-09-28
 
 Production readiness: everything configurable, state shareable across workers, humans in control of side
