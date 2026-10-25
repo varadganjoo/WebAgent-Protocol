@@ -142,6 +142,75 @@
     "signing_payload": "{\"capabilities\":[{\"description\":\"Units available right now.\",\"effects\":\"read\",\"id\":\"check_pastry_stock\",\"input_schema\":{\"properties\":{\"item\":{\"type\":\"string\"}},\"required\":[\"item\"],\"type\":\"object\"},\"name\":\"Check Pastry Stock\",\"output_schema\":null,\"requires_auth\":false,\"streaming\":false}],\"challenge_url\":\"https://bakery.example/wap/v1/challenge\",\"conversation_policy\":null,\"description\":\"Test-vector manifest.\",\"domain\":\"bakery.example\",\"expires_at\":1790003600.5,\"interaction_url\":\"https://bakery.example/wap/v1/interact\",\"issued_at\":1790000000.5,\"key_endorsements\":{},\"mcp_url\":\"https://bakery.example/mcp\",\"name\":\"Golden Crust Bakery\",\"pow_difficulty\":4,\"pow_required\":true,\"previous_keys\":[],\"public_key\":\"badd3e739492f27a4897b5463a514926a5b7d19ab76238b92c6640f36b15b25f\",\"rate_limit_policy\":{\"burst\":30,\"requests_per_minute\":120,\"scopes\":[\"ip\",\"agent_key\"]},\"wap_version\":\"1.0\"}",
     "signature": "fbc22dc7e9503ad3a322bcb9e5a46bc44705e5eec49622da98692464d9b9aeef892fcc4824d145ed69324181f681a8ee194db7983187851b97763ce9c9047e0a"
   },
+  "discovery_manifest": {
+    "document": {
+      "wap_version": "1.1",
+      "domain": "bakery.example",
+      "name": "Golden Crust Bakery",
+      "description": "Test-vector manifest.",
+      "discovery": {
+        "schema_version": "1.0",
+        "category": "restaurant",
+        "location": null,
+        "service_areas": [
+          {
+            "country": "AU",
+            "region": null,
+            "locality": "Sydney",
+            "postal_code": null
+          }
+        ],
+        "attributes": {}
+      },
+      "public_key": "badd3e739492f27a4897b5463a514926a5b7d19ab76238b92c6640f36b15b25f",
+      "interaction_url": "https://bakery.example/wap/v1/interact",
+      "challenge_url": "https://bakery.example/wap/v1/challenge",
+      "mcp_url": "https://bakery.example/mcp",
+      "capabilities": [
+        {
+          "id": "check_pastry_stock",
+          "name": "Check Pastry Stock",
+          "description": "Units available right now.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "item": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "item"
+            ]
+          },
+          "output_schema": null,
+          "requires_auth": false,
+          "effects": "read",
+          "streaming": false,
+          "semantic_operation": "retail.inventory.check.v1",
+          "semantic_schema_version": "1.0",
+          "execution": "deterministic"
+        }
+      ],
+      "pow_required": true,
+      "pow_difficulty": 4,
+      "rate_limit_policy": {
+        "requests_per_minute": 120,
+        "burst": 30,
+        "scopes": [
+          "ip",
+          "agent_key"
+        ]
+      },
+      "conversation_policy": null,
+      "issued_at": 1790000000.5,
+      "expires_at": 1790003600.5,
+      "previous_keys": [],
+      "key_endorsements": {},
+      "signature": "9453c625c310233dfacc50ace384584798294064438bbaa3e752f83a65e2cff0ff7128d9dad71f1ee9267ec95e93117a79f4b5b67611f67b5a606c82b16d2c05"
+    },
+    "signing_payload": "{\"capabilities\":[{\"description\":\"Units available right now.\",\"effects\":\"read\",\"execution\":\"deterministic\",\"id\":\"check_pastry_stock\",\"input_schema\":{\"properties\":{\"item\":{\"type\":\"string\"}},\"required\":[\"item\"],\"type\":\"object\"},\"name\":\"Check Pastry Stock\",\"output_schema\":null,\"requires_auth\":false,\"semantic_operation\":\"retail.inventory.check.v1\",\"semantic_schema_version\":\"1.0\",\"streaming\":false}],\"challenge_url\":\"https://bakery.example/wap/v1/challenge\",\"conversation_policy\":null,\"description\":\"Test-vector manifest.\",\"discovery\":{\"attributes\":{},\"category\":\"restaurant\",\"location\":null,\"schema_version\":\"1.0\",\"service_areas\":[{\"country\":\"AU\",\"locality\":\"Sydney\",\"postal_code\":null,\"region\":null}]},\"domain\":\"bakery.example\",\"expires_at\":1790003600.5,\"interaction_url\":\"https://bakery.example/wap/v1/interact\",\"issued_at\":1790000000.5,\"key_endorsements\":{},\"mcp_url\":\"https://bakery.example/mcp\",\"name\":\"Golden Crust Bakery\",\"pow_difficulty\":4,\"pow_required\":true,\"previous_keys\":[],\"public_key\":\"badd3e739492f27a4897b5463a514926a5b7d19ab76238b92c6640f36b15b25f\",\"rate_limit_policy\":{\"burst\":30,\"requests_per_minute\":120,\"scopes\":[\"ip\",\"agent_key\"]},\"wap_version\":\"1.1\"}",
+    "signature": "9453c625c310233dfacc50ace384584798294064438bbaa3e752f83a65e2cff0ff7128d9dad71f1ee9267ec95e93117a79f4b5b67611f67b5a606c82b16d2c05"
+  },
   "rotated_manifest": {
     "document": {
       "wap_version": "1.0",

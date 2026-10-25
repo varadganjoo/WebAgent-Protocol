@@ -93,6 +93,11 @@ class MCPToolSource:
                 description=(tool.description or "")[:4096],
                 input_schema=schema,
                 output_schema=output,
+                **{
+                    key: tool.meta["io.webagent/" + key]
+                    for key in ("semantic_operation", "semantic_schema_version", "execution")
+                    if tool.meta and "io.webagent/" + key in tool.meta
+                },
             )
             wap.add_capability(capability, self._handler(tool.name))
             registered.append(capability_id)

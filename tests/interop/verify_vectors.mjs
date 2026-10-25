@@ -48,7 +48,7 @@ for (const [i, c] of vectors.jcs.entries()) {
   expect(canonicalize(c.input) === c.canonical, `jcs case ${i}`);
 }
 
-for (const name of ["manifest", "rotated_manifest", "request", "reply"]) {
+for (const name of ["manifest", "rotated_manifest", "request", "reply", "discovery_manifest"]) {
   const v = vectors[name];
   const payload = canonicalize(withoutKeys(v.document, ["signature"]));
   expect(payload === v.signing_payload, `${name} signing payload`);

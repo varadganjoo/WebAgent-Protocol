@@ -24,6 +24,33 @@ it has never seen:
 Free and open source (MIT). Python 3.11+. It's a library: you install it and build on it, and you choose how
 strict every protection is and where the state lives.
 
+### Find businesses without knowing their domains
+
+The optional **Capability Directory** extension adds structured cross-business discovery. Configure one or
+more independent directory providers, search by category, semantic operation, geography and public filters,
+then retrieve and verify each business's current signed manifest. Transactions still go directly to the
+business. Domain-based discovery continues to work without a directory.
+
+Capabilities can advertise a standard operation such as `hospitality.restaurant.reservation.create.v1`,
+semantic schema `1.0`, and an execution classification (`deterministic`, `external_service`, `agent`, or
+`human_assisted`). Local tool names remain unchanged. Matching uses exact identifiers and versions, followed
+by validation against the business's actual schema; names and descriptions do not establish equivalence.
+**A deterministic tool needs no business-side LLM.** Existing MCP servers can also publish this metadata.
+
+Run the complete fictional Sydney restaurant example (two services, directory, signatures, structured
+availability and consent). The clock is fixed at 24 October 2026, so "tomorrow" is reproducible:
+
+```bash
+python examples/restaurant_demo.py            # shows options, asks before booking
+python examples/restaurant_demo.py --approve  # explicitly simulate approval of the fictional booking
+```
+
+See [the restaurant tutorial](docs/restaurant-tutorial.md), [directory API and trust model](docs/discovery.md),
+and [architecture audit/compatibility decision](docs/discovery-design.md). This extension is experimental;
+no universal directory, vocabulary adoption or third-party MCP host interoperability is claimed.
+Enriched manifests explicitly use **1.1** and require an updated WAP client. Unchanged manifests and all
+interaction messages remain **1.0**, with their existing canonical bytes and signatures preserved.
+
 <p align="center">
   <img src="docs/assets/shopper_demo.svg" alt="A shopper agent discovers a bakery's agent, verifies its signature, solves a proof-of-work challenge, negotiates a bulk price over three rounds and receives a signed reservation token" width="760">
 </p>
@@ -316,6 +343,23 @@ pip install -e ".[dev]"
 pytest -q                                   # full suite; Redis and Node.js tests run when installed
 ruff check . && ruff format --check .
 ```
+
+For Redis coverage without a local `redis-server` executable, start a disposable container and
+set `WAP_TEST_REDIS_URL` before running pytest. For example, in PowerShell:
+
+```powershell
+docker run --rm -d --name wap-test-redis -p 127.0.0.1:16379:6379 redis:8-alpine
+try {
+    $env:WAP_TEST_REDIS_URL = "redis://127.0.0.1:16379/0"
+    python -m pytest -q
+} finally {
+    Remove-Item Env:WAP_TEST_REDIS_URL -ErrorAction SilentlyContinue
+    docker stop wap-test-redis
+}
+```
+
+Use a disposable test instance: tests write isolated key prefixes. An explicitly configured Redis
+connection failure fails the tests rather than silently skipping coverage.
 
 The suite covers:
 

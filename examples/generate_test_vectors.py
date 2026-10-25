@@ -20,6 +20,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from wap.spec.crypto import Signer, endorsement_payload, signing_payload  # noqa: E402
+from wap.spec.discovery import BusinessDiscovery, ServiceArea  # noqa: E402
 from wap.spec.jcs import canonicalize  # noqa: E402
 from wap.spec.models import AgentManifest, AgentMessage, Capability  # noqa: E402
 from wap.spec.pow import pow_digest, solve  # noqa: E402
@@ -69,6 +70,25 @@ def build() -> dict[str, Any]:
         expires_at=1790003600.5,
     )
     signed_manifest = domain_key.sign_model(manifest)
+    discovery_manifest = domain_key.sign_model(
+        manifest.model_copy(
+            update={
+                "wap_version": "1.1",
+                "discovery": BusinessDiscovery(
+                    category="restaurant", service_areas=[ServiceArea(country="AU", locality="Sydney")]
+                ),
+                "capabilities": [
+                    manifest.capabilities[0].model_copy(
+                        update={
+                            "semantic_operation": "retail.inventory.check.v1",
+                            "semantic_schema_version": "1.0",
+                            "execution": "deterministic",
+                        }
+                    )
+                ],
+            }
+        )
+    )
 
     rotated = manifest.model_copy(update={"previous_keys": [old_key.public_key]})
     rotated = rotated.model_copy(
@@ -126,6 +146,7 @@ def build() -> dict[str, Any]:
         },
         "jcs": [{"input": case, "canonical": canonicalize(case).decode("utf-8")} for case in JCS_CASES],
         "manifest": signed_doc(signed_manifest),
+        "discovery_manifest": signed_doc(discovery_manifest),
         "rotated_manifest": {
             **signed_doc(rotated),
             "endorsement_payload": endorsement_payload(rotated).decode("utf-8"),

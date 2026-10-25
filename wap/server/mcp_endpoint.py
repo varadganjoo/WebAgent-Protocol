@@ -140,7 +140,15 @@ class MCPEndpoint:
                     input_schema=cap.input_schema,
                     output_schema=output,
                     annotations=types.ToolAnnotations(title=cap.name, **mcp_annotation_hints(cap)),
-                    meta={META_PREFIX + "requires_auth": cap.requires_auth, META_PREFIX + "effects": cap.effects},
+                    meta={
+                        META_PREFIX + "requires_auth": cap.requires_auth,
+                        META_PREFIX + "effects": cap.effects,
+                        **{
+                            META_PREFIX + key: value
+                            for key, value in cap.model_dump().items()
+                            if key in ("semantic_operation", "semantic_schema_version", "execution")
+                        },
+                    },
                 )
             )
         return tools

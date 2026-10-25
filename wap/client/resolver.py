@@ -316,7 +316,7 @@ class ManifestResolver:
         )
 
     def _verify(self, manifest: AgentManifest, *, expected: str) -> None:
-        if manifest.wap_version != WAP_VERSION:
+        if manifest.wap_version not in ("1.0", "1.1"):
             raise VerificationFailed(expected, f"unsupported wap_version {manifest.wap_version!r}")
         if manifest.domain != expected:
             raise VerificationFailed(

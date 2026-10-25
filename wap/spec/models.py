@@ -17,7 +17,10 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from .discovery import BusinessDiscovery
+
 WAP_VERSION = "1.0"
+SUPPORTED_MANIFEST_VERSIONS = ("1.0", "1.1")
 WELL_KNOWN_PATH = "/.well-known/wap.json"
 # Also served (and tried by clients) for compatibility; other agent formats use this path too,
 # so clients must check that the document is a WAP manifest (it has ``wap_version``).
@@ -184,6 +187,30 @@ class Capability(WAPModel):
         ),
     )
     streaming: bool = Field(default=False, description="Whether the action streams tokens natively.")
+    # Omit absent extensions so WAP/1.0 canonical bytes and signatures stay identical.
+    semantic_operation: str | None = Field(
+        default=None,
+        max_length=192,
+        pattern=r"^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+\.v[1-9][0-9]*$",
+        exclude_if=lambda v: v is None,
+    )
+    semantic_schema_version: str | None = Field(
+        default=None,
+        pattern=r"^[1-9][0-9]*\.[0-9]+$",
+        max_length=24,
+        exclude_if=lambda v: v is None,
+    )
+    execution: Literal["deterministic", "external_service", "agent", "human_assisted"] | None = Field(
+        default=None,
+        exclude_if=lambda v: v is None,
+        description="Advertised implementation type; never a permission or safety guarantee.",
+    )
+
+    @model_validator(mode="after")
+    def _semantic_version(self) -> Capability:
+        if self.semantic_schema_version is not None and self.semantic_operation is None:
+            raise ValueError("semantic_schema_version requires semantic_operation")
+        return self
 
     @field_validator("id")
     @classmethod
@@ -224,10 +251,11 @@ class RateLimitPolicy(WAPModel):
 class AgentManifest(WAPModel):
     """The document served at ``/.well-known/wap.json`` (RFC 8615)."""
 
-    wap_version: Literal["1.0"] = WAP_VERSION
+    wap_version: Literal["1.0", "1.1"] = WAP_VERSION
     domain: str = Field(description="Authority (host[:port]) the manifest is bound to.")
     name: str = Field(min_length=1, max_length=256)
     description: str = Field(default="", max_length=8192)
+    discovery: BusinessDiscovery | None = Field(default=None, exclude_if=lambda v: v is None)
     public_key: str = Field(description="Hex-encoded raw 32-byte Ed25519 public key.")
     interaction_url: str
     challenge_url: str | None = None
@@ -285,6 +313,11 @@ class AgentManifest(WAPModel):
 
     @model_validator(mode="after")
     def _check_consistency(self) -> AgentManifest:
+        if self.wap_version == "1.0" and (
+            self.discovery is not None
+            or any(c.semantic_operation is not None or c.execution is not None for c in self.capabilities)
+        ):
+            raise ValueError("capability extensions require manifest version 1.1")
         ids = [c.id for c in self.capabilities]
         duplicates = {i for i in ids if ids.count(i) > 1}
         if duplicates:

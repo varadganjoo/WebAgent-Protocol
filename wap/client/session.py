@@ -8,13 +8,13 @@ import json
 import time
 import uuid
 from collections import OrderedDict
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import httpx
 from httpx_sse import EventSource
-from jsonschema import Draft202012Validator
+from jsonschema import Draft202012Validator, FormatChecker
 from jsonschema.exceptions import SchemaError
 from pydantic import ValidationError
 
@@ -55,6 +55,9 @@ from .exceptions import (
     VerificationFailed,
 )
 from .resolver import ManifestResolver, parse_target
+
+if TYPE_CHECKING:
+    from ..directory import BusinessSearchResult, DirectoryProvider, DirectoryQuery
 
 
 @dataclass
@@ -237,6 +240,81 @@ class WAPClient:
     async def discover(self, domain: str, *, force_refresh: bool = False) -> AgentManifest:
         """Resolve and verify ``domain``'s manifest (cached)."""
         return await self.resolver.resolve(domain, force_refresh=force_refresh)
+
+    async def search_businesses(
+        self,
+        query: DirectoryQuery,
+        providers: Mapping[str, DirectoryProvider],
+        *,
+        timeout: float = 10,
+    ) -> BusinessSearchResult:
+        """Search configured directories and independently verify current business manifests."""
+        from ..directory import DirectoryClient
+
+        return await DirectoryClient(self, providers, timeout=timeout).search(query)
+
+    async def invoke_operation(
+        self,
+        domain: str,
+        operation: str,
+        payload: dict[str, Any],
+        *,
+        schema_version: str = "1.0",
+        session_id: str | None = None,
+        auth_token: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> InteractionResult:
+        """Invoke exactly one recognised semantic candidate using the existing direct tool path.
+
+        Unknown/ambiguous versions require ordinary schema-based discovery. Non-read operations
+        require a configured confirmation hook; classification never grants permission.
+        """
+        from ..spec.semantics import check_local_schema, match_operation, reference_operations
+
+        manifest = await self.discover(domain)
+        candidates = match_operation(manifest, operation, schema_version=schema_version)
+        if len(candidates) != 1:
+            raise ProtocolError("semantic_operation_unavailable", "operation/version is unknown, absent or ambiguous")
+        cap = candidates[0]
+        if cap.effects != "read" and (self.confirm is None or cap.effects not in self.confirm_effects):
+            raise ProtocolError("confirmation_required", "configure a confirmation hook before semantic writes")
+        reference = reference_operations()[operation]
+        try:
+            check_local_schema(cap.input_schema)
+            if cap.output_schema:
+                check_local_schema(cap.output_schema)
+            Draft202012Validator.check_schema(cap.input_schema)
+            if cap.output_schema:
+                Draft202012Validator.check_schema(cap.output_schema)
+        except (ValueError, SchemaError) as exc:
+            raise VerificationFailed(domain, "semantic capability has an unsupported schema") from exc
+        validator = Draft202012Validator(reference["input_schema"], format_checker=FormatChecker())
+        errors = [e.message for e in validator.iter_errors(payload)]
+        if errors:
+            raise SchemaValidationError(cap.id, errors)
+        try:
+            validate_payload(manifest, cap.id, payload)
+        except SchemaValidationError:
+            raise
+        except Exception as exc:
+            raise VerificationFailed(domain, "semantic capability schema could not be resolved locally") from exc
+        result = await self.invoke(
+            domain, cap.id, payload, session_id=session_id, auth_token=auth_token, idempotency_key=idempotency_key
+        )
+        for schema in [reference["output_schema"], cap.output_schema]:
+            try:
+                valid = not schema or Draft202012Validator(schema, format_checker=FormatChecker()).is_valid(
+                    result.structured_data
+                )
+            except Exception as exc:
+                raise ProtocolError(
+                    "invalid_semantic_result", "business output schema could not be resolved locally"
+                ) from exc
+            if not valid:
+                raise ProtocolError(
+                    "invalid_semantic_result", "verified result violates its advertised operation schema"
+                )
+        return result
 
     async def fetch_challenge(self, manifest: AgentManifest) -> Challenge:
         if manifest.challenge_url is None:
